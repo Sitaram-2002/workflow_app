@@ -1,5 +1,5 @@
 /**
- * Complete Workflow Editor - Main editor functionality
+ * Complete Workflow Editor - Main editor implementation
  */
 class WorkflowEditor {
     constructor(options = {}) {
@@ -7,46 +7,44 @@ class WorkflowEditor {
             workflowId: null,
             workflowData: { nodes: [], connections: [] },
             csrfToken: null,
-            // Use absolute path to avoid relative URL issues
-            apiBaseUrl: "/api/workflows/",
+            apiBaseUrl: '/api/workflows/',
             autoSave: true,
-            ...options,
-        }
+            ...options
+        };
 
-        // Editor state
-        this.nodes = new Map()
-        this.connections = new Map()
-        this.selectedNode = null
-        this.selectedConnection = null
-        this.nodeTypes = new Map()
-        this.isDirty = false
-        this.isLoading = false
-        this.draggedNode = null
-        this.connectionStart = null
-        this.isConnecting = false
+        // State
+        this.nodes = new Map();
+        this.connections = new Map();
+        this.selectedNodes = new Set();
+        this.selectedConnections = new Set();
+        this.nodeTypes = new Map();
+        this.isDirty = false;
+        this.isLoading = false;
+        this.executionResults = new Map();
 
         // Canvas state
-        this.canvasOffset = { x: 0, y: 0 }
-        this.zoom = 1
-        this.isPanning = false
-        this.lastPanPoint = { x: 0, y: 0 }
+        this.transform = { x: 0, y: 0, scale: 1 };
+        this.isDragging = false;
+        this.isConnecting = false;
+        this.connectionStart = null;
+        this.dragOffset = { x: 0, y: 0 };
+        this.lastMousePos = { x: 0, y: 0 };
 
-        this.init()
+        this.init();
     }
 
     init() {
-        this.setupCanvas()
-        this.setupEventListeners()
-        this.loadNodeTypes()
-        this.loadWorkflow()
-        this.setupAutoSave()
+        this.setupCanvas();
+        this.setupEventListeners();
+        this.loadNodeTypes();
+        this.loadWorkflowData();
+        this.setupAutoSave();
     }
 
     setupCanvas() {
-        const canvas = document.getElementById('workflow-canvas')
-        if (!canvas) return
-
+        const canvas = document.getElementById('workflow-canvas');
         canvas.innerHTML = `
+            <div class="canvas-grid"></div>
             <svg class="connections-svg" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1;">
                 <defs>
                     <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -54,82 +52,66 @@ class WorkflowEditor {
                     </marker>
                 </defs>
             </svg>
-            <div class="nodes-container" style="position: relative; z-index: 2; width: 100%; height: 100%;"></div>
-        `
+            <div class="nodes-container" style="position: relative; z-index: 2;"></div>
+        `;
 
-        this.connectionsLayer = canvas.querySelector('.connections-svg')
-        this.nodesContainer = canvas.querySelector('.nodes-container')
+        this.connectionsLayer = canvas.querySelector('.connections-svg');
+        this.nodesContainer = canvas.querySelector('.nodes-container');
+        this.gridLayer = canvas.querySelector('.canvas-grid');
     }
 
     setupEventListeners() {
+        // Toolbar buttons
+        document.getElementById('save-btn')?.addEventListener('click', () => this.saveWorkflow());
+        document.getElementById('test-btn')?.addEventListener('click', () => this.testWorkflow());
+        document.getElementById('deploy-btn')?.addEventListener('click', () => this.deployWorkflow());
+        
+        // Zoom controls
+        document.getElementById('zoom-in')?.addEventListener('click', () => this.zoomIn());
+        document.getElementById('zoom-out')?.addEventListener('click', () => this.zoomOut());
+        document.getElementById('zoom-fit')?.addEventListener('click', () => this.fitToView());
+        document.getElementById('center-canvas')?.addEventListener('click', () => this.centerView());
+
         // Canvas events
-        const canvas = document.getElementById('workflow-canvas')
-        canvas.addEventListener('drop', this.onCanvasDrop.bind(this))
-        canvas.addEventListener('dragover', this.onCanvasDragOver.bind(this))
-        canvas.addEventListener('mousedown', this.onCanvasMouseDown.bind(this))
-        canvas.addEventListener('mousemove', this.onCanvasMouseMove.bind(this))
-        canvas.addEventListener('mouseup', this.onCanvasMouseUp.bind(this))
-        canvas.addEventListener('wheel', this.onCanvasWheel.bind(this))
+        const canvas = document.getElementById('workflow-canvas');
+        canvas.addEventListener('mousedown', this.onCanvasMouseDown.bind(this));
+        canvas.addEventListener('mousemove', this.onCanvasMouseMove.bind(this));
+        canvas.addEventListener('mouseup', this.onCanvasMouseUp.bind(this));
+        canvas.addEventListener('wheel', this.onCanvasWheel.bind(this));
+        canvas.addEventListener('dragover', this.onCanvasDragOver.bind(this));
+        canvas.addEventListener('drop', this.onCanvasDrop.bind(this));
 
-        // Toolbar events
-        document.getElementById('save-btn')?.addEventListener('click', () => this.saveWorkflow())
-        document.getElementById('test-btn')?.addEventListener('click', () => this.testWorkflow())
-        document.getElementById('zoom-in')?.addEventListener('click', () => this.zoomIn())
-        document.getElementById('zoom-out')?.addEventListener('click', () => this.zoomOut())
-        document.getElementById('zoom-fit')?.addEventListener('click', () => this.fitToView())
-        document.getElementById('center-canvas')?.addEventListener('click', () => this.centerCanvas())
-        document.getElementById('clear-canvas')?.addEventListener('click', () => this.clearCanvas())
+        // Node palette
+        this.setupNodePalette();
 
-        // Node palette events
-        this.setupNodePalette()
+        // Properties panel
+        this.setupPropertiesPanel();
 
-        // Tab events
-        document.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                this.switchTab(e.target.dataset.tab)
-            })
-        })
+        // Bottom panel tabs
+        this.setupBottomPanel();
+
+        // Workflow name/description changes
+        document.getElementById('workflow-name')?.addEventListener('change', (e) => {
+            this.markDirty();
+        });
+        document.getElementById('workflow-description')?.addEventListener('change', (e) => {
+            this.markDirty();
+        });
 
         // Keyboard shortcuts
-        document.addEventListener('keydown', this.onKeyDown.bind(this))
-    }
-
-    setupNodePalette() {
-        const paletteContent = document.querySelector('.palette-content')
-        if (!paletteContent) return
-
-        // Setup search
-        const searchInput = document.getElementById('node-search')
-        if (searchInput) {
-            searchInput.addEventListener('input', (e) => {
-                this.filterNodes(e.target.value)
-            })
-        }
-
-        // Setup category toggles
-        document.querySelectorAll('.category-header').forEach(header => {
-            header.addEventListener('click', () => {
-                const category = header.closest('.node-category')
-                category.classList.toggle('collapsed')
-            })
-        })
+        document.addEventListener('keydown', this.onKeyDown.bind(this));
     }
 
     async loadNodeTypes() {
         try {
-            const response = await fetch('/workflow/api/node-types/')
-            if (response.ok) {
-                const nodeTypes = await response.json()
-                nodeTypes.forEach(nodeType => {
-                    this.nodeTypes.set(nodeType.name, nodeType)
-                })
-                this.renderNodePalette()
-            } else {
-                this.loadDefaultNodeTypes()
-            }
+            const response = await this.apiCall('/api/node-types/', 'GET');
+            response.forEach(nodeType => {
+                this.nodeTypes.set(nodeType.name, nodeType);
+            });
+            this.populateNodePalette();
         } catch (error) {
-            console.warn('Failed to load node types, using defaults:', error)
-            this.loadDefaultNodeTypes()
+            console.error('Failed to load node types:', error);
+            this.loadDefaultNodeTypes();
         }
     }
 
@@ -144,46 +126,31 @@ class WorkflowEditor {
                 config_schema: { fields: [] }
             },
             {
-                name: 'webhook_trigger',
-                display_name: 'Webhook',
-                category: 'trigger',
-                icon: 'fa-globe',
-                color: '#3b82f6',
-                config_schema: {
-                    fields: [
-                        { name: 'path', type: 'text', label: 'Endpoint Path', placeholder: '/webhook/my-endpoint' },
-                        { name: 'method', type: 'select', label: 'HTTP Method', options: ['GET', 'POST', 'PUT', 'DELETE'], default: 'POST' }
-                    ]
-                }
-            },
-            {
-                name: 'http_request',
-                display_name: 'HTTP Request',
-                category: 'data',
-                icon: 'fa-exchange-alt',
-                color: '#8b5cf6',
-                config_schema: {
-                    fields: [
-                        { name: 'url', type: 'text', label: 'URL', placeholder: 'https://api.example.com/data', required: true },
-                        { name: 'method', type: 'select', label: 'Method', options: ['GET', 'POST', 'PUT', 'DELETE'], default: 'GET' },
-                        { name: 'headers', type: 'textarea', label: 'Headers (JSON)', placeholder: '{"Content-Type": "application/json"}' },
-                        { name: 'body', type: 'textarea', label: 'Body', placeholder: 'Request body' }
-                    ]
-                }
-            },
-            {
                 name: 'database_query',
                 display_name: 'Database Query',
                 category: 'data',
                 icon: 'fa-database',
+                color: '#8b5cf6',
+                config_schema: {
+                    fields: [
+                        { name: 'query_type', type: 'select', options: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'], default: 'SELECT', label: 'Query Type' },
+                        { name: 'table_name', type: 'text', required: true, label: 'Table Name' },
+                        { name: 'conditions', type: 'text', label: 'WHERE Conditions' },
+                        { name: 'fields', type: 'text', default: '*', label: 'Fields' },
+                        { name: 'limit', type: 'number', default: 100, label: 'Limit' }
+                    ]
+                }
+            },
+            {
+                name: 'data_transform',
+                display_name: 'Data Transform',
+                category: 'transform',
+                icon: 'fa-exchange-alt',
                 color: '#059669',
                 config_schema: {
                     fields: [
-                        { name: 'query_type', type: 'select', label: 'Query Type', options: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'], default: 'SELECT' },
-                        { name: 'table_name', type: 'text', label: 'Table Name', placeholder: 'users', required: true },
-                        { name: 'conditions', type: 'text', label: 'WHERE Conditions', placeholder: 'active = true' },
-                        { name: 'fields', type: 'text', label: 'Fields', placeholder: '*', default: '*' },
-                        { name: 'limit', type: 'number', label: 'Limit', default: 100 }
+                        { name: 'transform_type', type: 'select', options: ['map', 'filter', 'aggregate'], default: 'map', label: 'Transform Type' },
+                        { name: 'field_mappings', type: 'textarea', label: 'Field Mappings (JSON)' }
                     ]
                 }
             },
@@ -195,22 +162,8 @@ class WorkflowEditor {
                 color: '#ef4444',
                 config_schema: {
                     fields: [
-                        { name: 'field', type: 'text', label: 'Field Path', placeholder: 'data.status', required: true },
-                        { name: 'operator', type: 'select', label: 'Operator', options: ['equals', 'not_equals', 'greater_than', 'less_than', 'contains'], default: 'equals' },
-                        { name: 'value', type: 'text', label: 'Value', placeholder: 'expected value' }
-                    ]
-                }
-            },
-            {
-                name: 'data_transform',
-                display_name: 'Transform Data',
-                category: 'transform',
-                icon: 'fa-cogs',
-                color: '#f59e0b',
-                config_schema: {
-                    fields: [
-                        { name: 'transform_type', type: 'select', label: 'Transform Type', options: ['map', 'filter', 'aggregate'], default: 'map' },
-                        { name: 'field_mappings', type: 'textarea', label: 'Field Mappings (JSON)', placeholder: '[{"source": "old_field", "target": "new_field"}]' }
+                        { name: 'conditions', type: 'textarea', required: true, label: 'Conditions (JSON)' },
+                        { name: 'logic_operator', type: 'select', options: ['AND', 'OR'], default: 'AND', label: 'Logic Operator' }
                     ]
                 }
             },
@@ -222,1100 +175,898 @@ class WorkflowEditor {
                 color: '#06b6d4',
                 config_schema: {
                     fields: [
-                        { name: 'to', type: 'text', label: 'To', placeholder: 'user@example.com', required: true },
-                        { name: 'subject', type: 'text', label: 'Subject', placeholder: 'Email Subject', required: true },
-                        { name: 'body', type: 'textarea', label: 'Body', placeholder: 'Email body...', required: true }
-                    ]
-                }
-            },
-            {
-                name: 'json_parser',
-                display_name: 'JSON Parser',
-                category: 'transform',
-                icon: 'fa-code',
-                color: '#dc2626',
-                config_schema: {
-                    fields: [
-                        { name: 'operation', type: 'select', label: 'Operation', options: ['parse', 'stringify', 'extract'], default: 'parse' },
-                        { name: 'json_field', type: 'text', label: 'JSON Field', placeholder: 'data', default: 'data' }
-                    ]
-                }
-            },
-            {
-                name: 'delay',
-                display_name: 'Delay',
-                category: 'action',
-                icon: 'fa-clock',
-                color: '#f59e0b',
-                config_schema: {
-                    fields: [
-                        { name: 'delay_seconds', type: 'number', label: 'Delay (seconds)', default: 1, required: true }
-                    ]
-                }
-            },
-            {
-                name: 'webhook_send',
-                display_name: 'Send Webhook',
-                category: 'action',
-                icon: 'fa-paper-plane',
-                color: '#7c3aed',
-                config_schema: {
-                    fields: [
-                        { name: 'url', type: 'text', label: 'URL', placeholder: 'https://api.example.com/webhook', required: true },
-                        { name: 'method', type: 'select', label: 'Method', options: ['POST', 'PUT', 'PATCH'], default: 'POST' },
-                        { name: 'payload', type: 'textarea', label: 'Payload (JSON)', placeholder: 'JSON payload' }
-                    ]
-                }
-            },
-            {
-                name: 'response',
-                display_name: 'HTTP Response',
-                category: 'output',
-                icon: 'fa-reply',
-                color: '#0891b2',
-                config_schema: {
-                    fields: [
-                        { name: 'status_code', type: 'number', label: 'Status Code', default: 200 },
-                        { name: 'response_data', type: 'textarea', label: 'Response Data (JSON)', placeholder: 'JSON response' }
+                        { name: 'to', type: 'text', required: true, label: 'To Email' },
+                        { name: 'subject', type: 'text', required: true, label: 'Subject' },
+                        { name: 'body', type: 'textarea', required: true, label: 'Body' }
                     ]
                 }
             }
-        ]
+        ];
 
         defaultTypes.forEach(nodeType => {
-            this.nodeTypes.set(nodeType.name, nodeType)
-        })
-        this.renderNodePalette()
+            this.nodeTypes.set(nodeType.name, nodeType);
+        });
+        this.populateNodePalette();
     }
 
-    renderNodePalette() {
-        const categories = this.groupNodesByCategory()
+    populateNodePalette() {
+        const categories = this.groupNodesByCategory();
         
         Object.entries(categories).forEach(([category, nodes]) => {
-            const categoryElement = document.querySelector(`[data-category="${category}"] .category-nodes`)
-            if (!categoryElement) return
-
-            categoryElement.innerHTML = ''
-            nodes.forEach(nodeType => {
-                const nodeElement = this.createPaletteNode(nodeType)
-                categoryElement.appendChild(nodeElement)
-            })
-        })
+            const categoryElement = document.querySelector(`[data-category="${category}"] .category-nodes`);
+            if (categoryElement) {
+                categoryElement.innerHTML = '';
+                nodes.forEach(nodeType => {
+                    const nodeElement = this.createPaletteNode(nodeType);
+                    categoryElement.appendChild(nodeElement);
+                });
+            }
+        });
     }
 
     groupNodesByCategory() {
-        const categories = {}
+        const categories = {};
         this.nodeTypes.forEach(nodeType => {
-            const category = nodeType.category || 'other'
+            const category = nodeType.category || 'other';
             if (!categories[category]) {
-                categories[category] = []
+                categories[category] = [];
             }
-            categories[category].push(nodeType)
-        })
-        return categories
+            categories[category].push(nodeType);
+        });
+        return categories;
     }
 
     createPaletteNode(nodeType) {
-        const nodeDiv = document.createElement('div')
-        nodeDiv.className = 'palette-node'
-        nodeDiv.draggable = true
-        nodeDiv.dataset.nodeType = nodeType.name
-        nodeDiv.title = nodeType.description || nodeType.display_name
+        const nodeDiv = document.createElement('div');
+        nodeDiv.className = 'palette-node';
+        nodeDiv.draggable = true;
+        nodeDiv.setAttribute('data-node-type', nodeType.name);
+        nodeDiv.title = nodeType.description || nodeType.display_name;
 
         nodeDiv.innerHTML = `
             <div class="node-icon" style="background-color: ${nodeType.color}">
                 <i class="fas ${nodeType.icon}"></i>
             </div>
             <span class="node-name">${nodeType.display_name}</span>
-        `
+        `;
 
         nodeDiv.addEventListener('dragstart', (e) => {
-            this.draggedNode = nodeType
-            // Some browsers require setData in dragstart for drop to work
-            try {
-                e.dataTransfer.setData('text/plain', nodeType.name)
-            } catch (err) {
-                // ignore if not supported
-            }
-            e.dataTransfer.effectAllowed = 'copy'
-        })
+            e.dataTransfer.setData('text/plain', nodeType.name);
+            e.dataTransfer.setData('application/json', JSON.stringify(nodeType));
+        });
 
-        return nodeDiv
+        return nodeDiv;
     }
 
-    onCanvasDragOver(e) {
-        e.preventDefault()
-        e.dataTransfer.dropEffect = 'copy'
-    }
+    setupNodePalette() {
+        // Category toggle functionality
+        document.querySelectorAll('.category-header').forEach(header => {
+            header.addEventListener('click', () => {
+                const category = header.closest('.node-category');
+                category.classList.toggle('collapsed');
+            });
+        });
 
-    onCanvasDrop(e) {
-        e.preventDefault()
-        if (!this.draggedNode) return
-
-        const rect = e.currentTarget.getBoundingClientRect()
-        const x = (e.clientX - rect.left - this.canvasOffset.x) / this.zoom
-        const y = (e.clientY - rect.top - this.canvasOffset.y) / this.zoom
-
-        this.addNode(this.draggedNode, { x, y })
-        this.draggedNode = null
-    }
-
-    addNode(nodeType, position) {
-        const nodeId = this.generateId()
-        const node = {
-            id: nodeId,
-            type: nodeType.name,
-            name: nodeType.display_name,
-            position: position,
-            config: this.getDefaultConfig(nodeType),
-            data: {}
+        // Search functionality
+        const searchInput = document.getElementById('node-search');
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                this.filterNodes(e.target.value);
+            });
         }
-
-        this.nodes.set(nodeId, node)
-        this.renderNode(node)
-        this.markDirty()
-        return nodeId
     }
 
-    renderNode(node) {
-        const nodeType = this.nodeTypes.get(node.type)
-        if (!nodeType) return
+    filterNodes(searchTerm) {
+        const term = searchTerm.toLowerCase();
+        document.querySelectorAll('.palette-node').forEach(node => {
+            const name = node.querySelector('.node-name').textContent.toLowerCase();
+            const matches = name.includes(term);
+            node.style.display = matches ? 'flex' : 'none';
+        });
+    }
 
-        let nodeElement = document.querySelector(`[data-node-id="${node.id}"]`)
-        
-        if (!nodeElement) {
-            nodeElement = document.createElement('div')
-            nodeElement.className = 'workflow-node'
-            nodeElement.dataset.nodeId = node.id
-            nodeElement.style.position = 'absolute'
-            this.nodesContainer.appendChild(nodeElement)
-        }
+    setupPropertiesPanel() {
+        // Properties panel will be populated when nodes are selected
+    }
 
-        nodeElement.style.left = `${node.position.x}px`
-        nodeElement.style.top = `${node.position.y}px`
-        nodeElement.className = `workflow-node ${this.selectedNode?.id === node.id ? 'selected' : ''}`
+    setupBottomPanel() {
+        // Tab switching
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const tabName = e.target.dataset.tab;
+                this.switchTab(tabName);
+            });
+        });
 
-        nodeElement.innerHTML = `
-            <div class="node-header" style="background-color: ${nodeType.color}">
-                <div class="node-icon">
-                    <i class="fas ${nodeType.icon}"></i>
+        // Clear logs button
+        document.getElementById('clear-logs')?.addEventListener('click', () => {
+            document.getElementById('execution-logs').innerHTML = `
+                <div class="log-placeholder">
+                    <i class="fas fa-info-circle"></i>
+                    <p>Logs cleared</p>
                 </div>
-                <div class="node-title">${node.name}</div>
-                <div class="node-status ${node.status || ''}"></div>
-            </div>
-            <div class="node-body">
-                <div class="node-description">${this.getNodeDescription(node)}</div>
-            </div>
-            ${nodeType.category !== 'trigger' ? '<div class="node-handle input" data-type="input"></div>' : ''}
-            <div class="node-handle output" data-type="output"></div>
-        `
-
-        // Add event listeners
-        nodeElement.addEventListener('click', (e) => {
-            e.stopPropagation()
-            this.selectNode(node.id)
-        })
-
-        nodeElement.addEventListener('mousedown', (e) => {
-            if (e.target.classList.contains('node-handle')) return
-            this.startNodeDrag(e, node.id)
-        })
-
-        // Handle connection events
-        nodeElement.querySelectorAll('.node-handle').forEach(handle => {
-            handle.addEventListener('mousedown', (e) => {
-                e.stopPropagation()
-                this.startConnection(e, node.id, handle.dataset.type)
-            })
-        })
+            `;
+        });
     }
 
-    getNodeDescription(node) {
-        const config = node.config || {}
-        const keys = Object.keys(config)
-        
-        if (keys.length === 0) {
-            return 'Click to configure'
-        }
+    switchTab(tabName) {
+        // Update active tab button
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.tab === tabName);
+        });
 
-        const firstKey = keys[0]
-        const value = config[firstKey]
-        if (value) {
-            return `${firstKey}: ${String(value).substring(0, 30)}${String(value).length > 30 ? '...' : ''}`
-        }
-        
-        return 'Configured'
+        // Update active tab content
+        document.querySelectorAll('.tab-content').forEach(content => {
+            content.classList.toggle('active', content.id === `${tabName}-tab`);
+        });
     }
 
-    selectNode(nodeId) {
-        this.selectedNode = this.nodes.get(nodeId)
-        this.selectedConnection = null
-        
-        // Update visual selection
-        document.querySelectorAll('.workflow-node').forEach(el => {
-            el.classList.remove('selected')
-        })
-        document.querySelector(`[data-node-id="${nodeId}"]`)?.classList.add('selected')
-
-        // Show properties panel
-        this.showNodeProperties(this.selectedNode)
-    }
-
-    showNodeProperties(node) {
-        const nodeType = this.nodeTypes.get(node.type)
-        if (!nodeType) return
-
-        document.getElementById('no-selection').style.display = 'none'
-        document.getElementById('connection-properties').style.display = 'none'
-        
-        const propertiesPanel = document.getElementById('node-properties')
-        propertiesPanel.style.display = 'block'
-        
-        document.getElementById('panel-title').textContent = node.name
-
-        let html = `
-            <div class="form-section">
-                <h4>General</h4>
-                <div class="form-group">
-                    <label for="node-name">Node Name</label>
-                    <input type="text" id="node-name" value="${node.name}" class="form-control">
-                </div>
-            </div>
-        `
-
-        if (nodeType.config_schema && nodeType.config_schema.fields) {
-            html += '<div class="form-section"><h4>Configuration</h4>'
-            
-            nodeType.config_schema.fields.forEach(field => {
-                const value = node.config[field.name] || field.default || ''
-                html += this.generateFormField(field, value)
-            })
-            
-            html += '</div>'
-        }
-
-        // Add data preview section
-        html += `
-            <div class="form-section">
-                <h4>Data Preview</h4>
-                <div class="data-preview">
-                    <pre id="node-data-preview">${JSON.stringify(node.data || {}, null, 2)}</pre>
-                </div>
-            </div>
-        `
-
-        propertiesPanel.innerHTML = html
-
-        // Add event listeners
-        propertiesPanel.querySelectorAll('input, select, textarea').forEach(input => {
-            input.addEventListener('change', (e) => {
-                this.updateNodeProperty(node.id, e.target.name || e.target.id.replace('node-', ''), e.target.value)
-            })
-        })
-    }
-
-    generateFormField(field, value) {
-        const fieldId = `field-${field.name}`
-        let html = `<div class="form-group">`
-        html += `<label for="${fieldId}">${field.label}</label>`
-
-        switch (field.type) {
-            case 'text':
-                html += `<input type="text" id="${fieldId}" name="${field.name}" value="${value}" placeholder="${field.placeholder || ''}" class="form-control" ${field.required ? 'required' : ''}>`
-                break
-            case 'number':
-                html += `<input type="number" id="${fieldId}" name="${field.name}" value="${value}" placeholder="${field.placeholder || ''}" class="form-control" ${field.required ? 'required' : ''}>`
-                break
-            case 'textarea':
-                html += `<textarea id="${fieldId}" name="${field.name}" placeholder="${field.placeholder || ''}" class="form-control" rows="3" ${field.required ? 'required' : ''}>${value}</textarea>`
-                break
-            case 'select':
-                html += `<select id="${fieldId}" name="${field.name}" class="form-control" ${field.required ? 'required' : ''}>`
-                if (!field.required) {
-                    html += '<option value="">-- Select --</option>'
-                }
-                field.options.forEach(option => {
-                    const selected = value === option ? 'selected' : ''
-                    html += `<option value="${option}" ${selected}>${option}</option>`
-                })
-                html += '</select>'
-                break
-            case 'checkbox':
-                const checked = value === true || value === 'true' ? 'checked' : ''
-                html += `<label class="checkbox-label"><input type="checkbox" id="${fieldId}" name="${field.name}" ${checked}> ${field.label}</label>`
-                break
-        }
-
-        html += '</div>'
-        return html
-    }
-
-    updateNodeProperty(nodeId, property, value) {
-        const node = this.nodes.get(nodeId)
-        if (!node) return
-
-        if (property === 'name') {
-            node.name = value
-        } else if (property === 'description') {
-            node.description = value
-        } else if (property === 'continue_on_error') {
-            node.continue_on_error = value
-        } else if (property === 'timeout') {
-            node.timeout = value
-        } else {
-            if (!node.config) node.config = {}
-            node.config[property] = value
-        }
-
-        this.renderNode(node)
-        this.markDirty()
-    }
-
-    startConnection(e, nodeId, handleType) {
-        e.preventDefault()
-        e.stopPropagation()
-        
-        if (handleType === 'output') {
-            this.isConnecting = true
-            this.connectionStart = { nodeId, handleType }
-            
-            // Add visual feedback
-            const sourceNode = document.querySelector(`[data-node-id="${nodeId}"]`)
-            const sourceHandle = sourceNode.querySelector('.node-handle.output')
-            sourceHandle.classList.add('connecting')
-            
-            // Set up mouse move listener for temporary connection
-            const canvas = document.getElementById('workflow-canvas')
-            const canvasRect = canvas.getBoundingClientRect()
-            
-            const updateTempConnection = (e) => {
-                this.updateTempConnection(e, canvasRect)
-            }
-            
-            const finishConnection = (e) => {
-                document.removeEventListener('mousemove', updateTempConnection)
-                document.removeEventListener('mouseup', finishConnection)
-                sourceHandle.classList.remove('connecting')
-                this.finishConnection(e)
-            }
-            
-            document.addEventListener('mousemove', updateTempConnection)
-            document.addEventListener('mouseup', finishConnection)
-            
-        } else if (handleType === 'input' && this.connectionStart) {
-            // Complete connection
-            this.completeConnection(nodeId)
-        }
-    }
-    
-    updateTempConnection(e, canvasRect) {
-        if (!this.connectionStart) return
-        
-        let tempLine = this.connectionsLayer.querySelector('.temp-connection')
-        if (!tempLine) {
-            tempLine = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-            tempLine.setAttribute('class', 'temp-connection')
-            tempLine.setAttribute('stroke', '#6b7280')
-            tempLine.setAttribute('stroke-width', '2')
-            tempLine.setAttribute('stroke-dasharray', '5,5')
-            tempLine.setAttribute('fill', 'none')
-            this.connectionsLayer.appendChild(tempLine)
-        }
-        
-        const sourceNode = document.querySelector(`[data-node-id="${this.connectionStart.nodeId}"]`)
-        const sourceHandle = sourceNode.querySelector('.node-handle.output')
-        const sourceRect = sourceHandle.getBoundingClientRect()
-        
-        const startX = sourceRect.left + sourceRect.width / 2 - canvasRect.left
-        const startY = sourceRect.top + sourceRect.height / 2 - canvasRect.top
-        const endX = e.clientX - canvasRect.left
-        const endY = e.clientY - canvasRect.top
-        
-        const dx = endX - startX
-        const controlOffset = Math.max(50, Math.abs(dx) * 0.5)
-        
-        const path = `M ${startX} ${startY} C ${startX + controlOffset} ${startY}, ${endX - controlOffset} ${endY}, ${endX} ${endY}`
-        tempLine.setAttribute('d', path)
-    }
-    
-    finishConnection(e) {
-        // Remove temporary connection
-        const tempLine = this.connectionsLayer.querySelector('.temp-connection')
-        if (tempLine) {
-            tempLine.remove()
-        }
-        
-        // Check if we're over an input handle
-        const target = document.elementFromPoint(e.clientX, e.clientY)
-        if (target && target.classList.contains('node-handle') && target.classList.contains('input')) {
-            const targetNode = target.closest('.workflow-node')
-            const targetNodeId = targetNode.getAttribute('data-node-id')
-            
-            if (this.connectionStart && targetNodeId !== this.connectionStart.nodeId) {
-                this.completeConnection(targetNodeId)
-            }
-        }
-        
-        this.isConnecting = false
-        this.connectionStart = null
-    }
-
-    createTempConnection(e) {
-        const tempLine = document.createElementNS('http://www.w3.org/2000/svg', 'line')
-        tempLine.setAttribute('class', 'temp-connection')
-        tempLine.setAttribute('stroke', '#6b7280')
-        tempLine.setAttribute('stroke-width', '2')
-        tempLine.setAttribute('stroke-dasharray', '5,5')
-        
-        const startNode = document.querySelector(`[data-node-id="${this.connectionStart.nodeId}"]`)
-        const startHandle = startNode.querySelector('.node-handle.output')
-        const startRect = startHandle.getBoundingClientRect()
-        const canvasRect = document.getElementById('workflow-canvas').getBoundingClientRect()
-        
-        const startX = startRect.left + startRect.width / 2 - canvasRect.left
-        const startY = startRect.top + startRect.height / 2 - canvasRect.top
-        
-        tempLine.setAttribute('x1', startX)
-        tempLine.setAttribute('y1', startY)
-        tempLine.setAttribute('x2', e.clientX - canvasRect.left)
-        tempLine.setAttribute('y2', e.clientY - canvasRect.top)
-        
-        this.connectionsLayer.appendChild(tempLine)
-        
-        // Update temp connection on mouse move
-        const updateTempConnection = (e) => {
-            tempLine.setAttribute('x2', e.clientX - canvasRect.left)
-            tempLine.setAttribute('y2', e.clientY - canvasRect.top)
-        }
-        
-        document.addEventListener('mousemove', updateTempConnection)
-        
-        // Clean up on mouse up
-        const cleanup = () => {
-            document.removeEventListener('mousemove', updateTempConnection)
-            document.removeEventListener('mouseup', cleanup)
-            tempLine.remove()
-            this.isConnecting = false
-            this.connectionStart = null
-        }
-        
-        document.addEventListener('mouseup', cleanup)
-    }
-
-    completeConnection(targetNodeId) {
-        if (!this.connectionStart || this.connectionStart.nodeId === targetNodeId) return
-
-        const connectionId = this.generateId()
-        const connection = {
-            id: connectionId,
-            source: this.connectionStart.nodeId,
-            target: targetNodeId,
-            sourceHandle: 'output',
-            targetHandle: 'input'
-        }
-
-        this.connections.set(connectionId, connection)
-        this.renderConnection(connection)
-        this.markDirty()
-    }
-
-    renderConnection(connection) {
-        const sourceNode = document.querySelector(`[data-node-id="${connection.source}"]`)
-        const targetNode = document.querySelector(`[data-node-id="${connection.target}"]`)
-        
-        if (!sourceNode || !targetNode) return
-
-        const sourceHandle = sourceNode.querySelector('.node-handle.output')
-        const targetHandle = targetNode.querySelector('.node-handle.input')
-        
-        if (!sourceHandle || !targetHandle) return
-        
-        const sourceRect = sourceHandle.getBoundingClientRect()
-        const targetRect = targetHandle.getBoundingClientRect()
-        const canvasRect = document.getElementById('workflow-canvas').getBoundingClientRect()
-        
-        const startX = sourceRect.left + sourceRect.width / 2 - canvasRect.left
-        const startY = sourceRect.top + sourceRect.height / 2 - canvasRect.top
-        const endX = targetRect.left + targetRect.width / 2 - canvasRect.left
-        const endY = targetRect.top + targetRect.height / 2 - canvasRect.top
-        
-        let connectionElement = this.connectionsLayer.querySelector(`[data-connection-id="${connection.id}"]`)
-        
-        if (!connectionElement) {
-            connectionElement = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-            connectionElement.setAttribute('data-connection-id', connection.id)
-            connectionElement.setAttribute('class', 'connection-line')
-            connectionElement.setAttribute('stroke', '#3b82f6')
-            connectionElement.setAttribute('stroke-width', '2')
-            connectionElement.setAttribute('fill', 'none')
-            connectionElement.setAttribute('marker-end', 'url(#arrowhead)')
-            connectionElement.style.pointerEvents = 'stroke'
-            connectionElement.style.cursor = 'pointer'
-            this.connectionsLayer.appendChild(connectionElement)
-            
-            connectionElement.addEventListener('click', (e) => {
-                e.stopPropagation()
-                this.selectConnection(connection.id)
-            })
-        }
-
-        // Create curved path
-        const dx = endX - startX
-        const dy = endY - startY
-        const controlOffset = Math.max(50, Math.abs(dx) * 0.5)
-        
-        const path = `M ${startX} ${startY} C ${startX + controlOffset} ${startY}, ${endX - controlOffset} ${endY}, ${endX} ${endY}`
-        connectionElement.setAttribute('d', path)
-    }
-
-    selectConnection(connectionId) {
-        this.selectedConnection = this.connections.get(connectionId)
-        this.selectedNode = null
-        
-        // Update visual selection
-        document.querySelectorAll('.workflow-node').forEach(el => {
-            el.classList.remove('selected')
-        })
-        document.querySelectorAll('.connection-line').forEach(el => {
-            el.classList.remove('selected')
-        })
-        document.querySelector(`[data-connection-id="${connectionId}"]`)?.classList.add('selected')
-
-        this.showConnectionProperties(this.selectedConnection)
-    }
-
-    showConnectionProperties(connection) {
-        document.getElementById('no-selection').style.display = 'none'
-        document.getElementById('node-properties').style.display = 'none'
-        
-        const propertiesPanel = document.getElementById('connection-properties')
-        propertiesPanel.style.display = 'block'
-        
-        document.getElementById('panel-title').textContent = 'Connection Properties'
-
-        propertiesPanel.innerHTML = `
-            <div class="form-section">
-                <h4>Connection Details</h4>
-                <div class="form-group">
-                    <label>Source Node</label>
-                    <input type="text" value="${this.nodes.get(connection.source)?.name || connection.source}" class="form-control" readonly>
-                </div>
-                <div class="form-group">
-                    <label>Target Node</label>
-                    <input type="text" value="${this.nodes.get(connection.target)?.name || connection.target}" class="form-control" readonly>
-                </div>
-                <div class="form-group">
-                    <button class="btn btn-danger" onclick="workflowEditor.deleteConnection('${connection.id}')">
-                        <i class="fas fa-trash"></i> Delete Connection
-                    </button>
-                </div>
-            </div>
-        `
-    }
-
-    deleteConnection(connectionId) {
-        this.connections.delete(connectionId)
-        const connectionElement = this.connectionsLayer.querySelector(`[data-connection-id="${connectionId}"]`)
-        if (connectionElement) {
-            connectionElement.remove()
-        }
-        this.hideProperties()
-        this.markDirty()
-    }
-
-    hideProperties() {
-        document.getElementById('no-selection').style.display = 'flex'
-        document.getElementById('node-properties').style.display = 'none'
-        document.getElementById('connection-properties').style.display = 'none'
-        document.getElementById('panel-title').textContent = 'Properties'
-        
-        this.selectedNode = null
-        this.selectedConnection = null
-        
-        document.querySelectorAll('.workflow-node').forEach(el => {
-            el.classList.remove('selected')
-        })
-        document.querySelectorAll('.connection-line').forEach(el => {
-            el.classList.remove('selected')
-        })
-    }
-
+    // Canvas event handlers
     onCanvasMouseDown(e) {
-        if (e.target.id === 'workflow-canvas' || e.target.classList.contains('nodes-container')) {
-            this.hideProperties()
-            this.startPanning(e)
+        if (e.target.classList.contains('workflow-canvas') || e.target.classList.contains('canvas-grid')) {
+            this.clearSelection();
+            this.isPanning = true;
+            this.lastMousePos = { x: e.clientX, y: e.clientY };
+            e.target.style.cursor = 'grabbing';
         }
-    }
-
-    startPanning(e) {
-        this.isPanning = true
-        this.lastPanPoint = { x: e.clientX, y: e.clientY }
-        document.getElementById('workflow-canvas').style.cursor = 'grabbing'
     }
 
     onCanvasMouseMove(e) {
         if (this.isPanning) {
-            const dx = e.clientX - this.lastPanPoint.x
-            const dy = e.clientY - this.lastPanPoint.y
-            
-            this.canvasOffset.x += dx
-            this.canvasOffset.y += dy
-            
-            this.updateCanvasTransform()
-            this.lastPanPoint = { x: e.clientX, y: e.clientY }
+            const dx = e.clientX - this.lastMousePos.x;
+            const dy = e.clientY - this.lastMousePos.y;
+            this.transform.x += dx;
+            this.transform.y += dy;
+            this.updateTransform();
+            this.lastMousePos = { x: e.clientX, y: e.clientY };
+        }
+
+        if (this.isDragging && this.selectedNodes.size > 0) {
+            const dx = e.clientX - this.lastMousePos.x;
+            const dy = e.clientY - this.lastMousePos.y;
+
+            this.selectedNodes.forEach(nodeId => {
+                const node = this.nodes.get(nodeId);
+                if (node) {
+                    node.position.x += dx / this.transform.scale;
+                    node.position.y += dy / this.transform.scale;
+                    this.renderNode(node);
+                }
+            });
+
+            this.renderConnections();
+            this.lastMousePos = { x: e.clientX, y: e.clientY };
+            this.markDirty();
+        }
+
+        if (this.isConnecting && this.connectionStart) {
+            this.updateTempConnection(e);
         }
     }
 
     onCanvasMouseUp(e) {
         if (this.isPanning) {
-            this.isPanning = false
-            document.getElementById('workflow-canvas').style.cursor = 'grab'
-        }
-    }
-
-    startNodeDrag(e, nodeId) {
-        e.preventDefault()
-        const node = this.nodes.get(nodeId)
-        if (!node) return
-
-        const startX = e.clientX
-        const startY = e.clientY
-        const startPos = { ...node.position }
-
-        const onMouseMove = (e) => {
-            const dx = (e.clientX - startX) / this.zoom
-            const dy = (e.clientY - startY) / this.zoom
-            
-            node.position.x = startPos.x + dx
-            node.position.y = startPos.y + dy
-            
-            this.renderNode(node)
-            this.renderAllConnections()
+            this.isPanning = false;
+            e.target.style.cursor = 'grab';
         }
 
-        const onMouseUp = () => {
-            document.removeEventListener('mousemove', onMouseMove)
-            document.removeEventListener('mouseup', onMouseUp)
-            this.markDirty()
+        if (this.isDragging) {
+            this.isDragging = false;
         }
 
-        document.addEventListener('mousemove', onMouseMove)
-        document.addEventListener('mouseup', onMouseUp)
-    }
-
-    renderAllConnections() {
-        this.connections.forEach(connection => {
-            this.renderConnection(connection)
-        })
+        if (this.isConnecting) {
+            this.finishConnection(e);
+        }
     }
 
     onCanvasWheel(e) {
-        e.preventDefault()
+        e.preventDefault();
+        const scaleFactor = e.deltaY > 0 ? 0.9 : 1.1;
+        const newScale = Math.max(0.1, Math.min(3, this.transform.scale * scaleFactor));
         
-        const rect = e.currentTarget.getBoundingClientRect()
-        const mouseX = e.clientX - rect.left
-        const mouseY = e.clientY - rect.top
-        
-        const scaleFactor = e.deltaY > 0 ? 0.9 : 1.1
-        const newZoom = Math.max(0.1, Math.min(3, this.zoom * scaleFactor))
-        
-        // Zoom towards mouse position
-        const zoomChange = newZoom / this.zoom
-        this.canvasOffset.x = mouseX - (mouseX - this.canvasOffset.x) * zoomChange
-        this.canvasOffset.y = mouseY - (mouseY - this.canvasOffset.y) * zoomChange
-        this.zoom = newZoom
-        
-        this.updateCanvasTransform()
-        this.updateZoomDisplay()
+        const rect = e.currentTarget.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        const scaleChange = newScale / this.transform.scale;
+        this.transform.x = mouseX - (mouseX - this.transform.x) * scaleChange;
+        this.transform.y = mouseY - (mouseY - this.transform.y) * scaleChange;
+        this.transform.scale = newScale;
+
+        this.updateTransform();
+        this.updateZoomDisplay();
     }
 
-    updateCanvasTransform() {
-        const transform = `translate(${this.canvasOffset.x}px, ${this.canvasOffset.y}px) scale(${this.zoom})`
-        this.nodesContainer.style.transform = transform
-        this.connectionsLayer.style.transform = transform
+    onCanvasDragOver(e) {
+        e.preventDefault();
     }
 
-    updateZoomDisplay() {
-        const zoomDisplay = document.getElementById('zoom-level')
-        if (zoomDisplay) {
-            zoomDisplay.textContent = `${Math.round(this.zoom * 100)}%`
-        }
-    }
+    onCanvasDrop(e) {
+        e.preventDefault();
+        const nodeType = e.dataTransfer.getData('text/plain');
+        if (!nodeType) return;
 
-    zoomIn() {
-        this.zoom = Math.min(this.zoom * 1.2, 3)
-        this.updateCanvasTransform()
-        this.updateZoomDisplay()
-    }
+        const rect = e.currentTarget.getBoundingClientRect();
+        const x = (e.clientX - rect.left - this.transform.x) / this.transform.scale;
+        const y = (e.clientY - rect.top - this.transform.y) / this.transform.scale;
 
-    zoomOut() {
-        this.zoom = Math.max(this.zoom / 1.2, 0.1)
-        this.updateCanvasTransform()
-        this.updateZoomDisplay()
-    }
-
-    fitToView() {
-        if (this.nodes.size === 0) return
-
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-        
-        this.nodes.forEach(node => {
-            minX = Math.min(minX, node.position.x)
-            minY = Math.min(minY, node.position.y)
-            maxX = Math.max(maxX, node.position.x + 200)
-            maxY = Math.max(maxY, node.position.y + 100)
-        })
-
-        const workflowWidth = maxX - minX
-        const workflowHeight = maxY - minY
-        const canvas = document.getElementById('workflow-canvas')
-        const canvasRect = canvas.getBoundingClientRect()
-        
-        const scaleX = (canvasRect.width - 100) / workflowWidth
-        const scaleY = (canvasRect.height - 100) / workflowHeight
-        
-        this.zoom = Math.min(scaleX, scaleY, 1)
-        
-        const centerX = (minX + maxX) / 2
-        const centerY = (minY + maxY) / 2
-        
-        this.canvasOffset.x = canvasRect.width / 2 - centerX * this.zoom
-        this.canvasOffset.y = canvasRect.height / 2 - centerY * this.zoom
-        
-        this.updateCanvasTransform()
-        this.updateZoomDisplay()
-    }
-
-    centerCanvas() {
-        if (this.nodes.size === 0) return
-
-        let centerX = 0, centerY = 0
-        this.nodes.forEach(node => {
-            centerX += node.position.x
-            centerY += node.position.y
-        })
-        
-        centerX /= this.nodes.size
-        centerY /= this.nodes.size
-        
-        const canvas = document.getElementById('workflow-canvas')
-        const canvasRect = canvas.getBoundingClientRect()
-        
-        this.canvasOffset.x = canvasRect.width / 2 - centerX * this.zoom
-        this.canvasOffset.y = canvasRect.height / 2 - centerY * this.zoom
-        
-        this.updateCanvasTransform()
-    }
-
-    clearCanvas() {
-        if (confirm('Are you sure you want to clear the entire canvas?')) {
-            this.nodes.clear()
-            this.connections.clear()
-            this.nodesContainer.innerHTML = ''
-            this.connectionsLayer.innerHTML = `
-                <defs>
-                    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                        <polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6" />
-                    </marker>
-                </defs>
-            `
-            this.hideProperties()
-            this.markDirty()
-        }
+        this.addNode(nodeType, { x, y });
     }
 
     onKeyDown(e) {
-        if (e.key === 'Delete' && (this.selectedNode || this.selectedConnection)) {
-            this.deleteSelected()
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+            this.deleteSelected();
         } else if (e.key === 'Escape') {
-            this.hideProperties()
+            this.clearSelection();
         } else if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-            e.preventDefault()
-            this.saveWorkflow()
+            e.preventDefault();
+            this.saveWorkflow();
+        } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            e.preventDefault();
+            this.testWorkflow();
         }
+    }
+
+    // Node management
+    addNode(nodeTypeName, position) {
+        const nodeType = this.nodeTypes.get(nodeTypeName);
+        if (!nodeType) {
+            console.error('Unknown node type:', nodeTypeName);
+            return;
+        }
+
+        const nodeId = this.generateId();
+        const node = {
+            id: nodeId,
+            type: nodeTypeName,
+            name: nodeType.display_name,
+            position: position || { x: 100, y: 100 },
+            config: {},
+            data: null,
+            status: 'idle'
+        };
+
+        this.nodes.set(nodeId, node);
+        this.renderNode(node);
+        this.markDirty();
+        return nodeId;
+    }
+
+    removeNode(nodeId) {
+        // Remove connections
+        const connectionsToRemove = [];
+        this.connections.forEach((connection, id) => {
+            if (connection.source === nodeId || connection.target === nodeId) {
+                connectionsToRemove.push(id);
+            }
+        });
+
+        connectionsToRemove.forEach(id => this.removeConnection(id));
+
+        // Remove node
+        this.nodes.delete(nodeId);
+        const nodeElement = document.querySelector(`[data-node-id="${nodeId}"]`);
+        if (nodeElement) {
+            nodeElement.remove();
+        }
+
+        this.selectedNodes.delete(nodeId);
+        this.markDirty();
+    }
+
+    renderNode(node) {
+        let nodeElement = document.querySelector(`[data-node-id="${node.id}"]`);
+        
+        if (!nodeElement) {
+            nodeElement = document.createElement('div');
+            nodeElement.className = 'workflow-node';
+            nodeElement.setAttribute('data-node-id', node.id);
+            this.nodesContainer.appendChild(nodeElement);
+        }
+
+        const nodeType = this.nodeTypes.get(node.type);
+        const isSelected = this.selectedNodes.has(node.id);
+
+        nodeElement.className = `workflow-node ${isSelected ? 'selected' : ''} status-${node.status}`;
+        nodeElement.style.left = `${node.position.x}px`;
+        nodeElement.style.top = `${node.position.y}px`;
+
+        nodeElement.innerHTML = `
+            <div class="node-header" style="background-color: ${nodeType?.color || '#6b7280'}">
+                <div class="node-icon">
+                    <i class="fas ${nodeType?.icon || 'fa-cube'}"></i>
+                </div>
+                <div class="node-title">${node.name}</div>
+                <div class="node-status ${node.status}"></div>
+            </div>
+            <div class="node-body">
+                ${this.getNodeDescription(node)}
+                ${node.data ? this.renderNodeData(node.data) : ''}
+            </div>
+            <div class="node-handles">
+                <div class="node-handle input" data-handle="input"></div>
+                <div class="node-handle output" data-handle="output"></div>
+            </div>
+        `;
+
+        // Add event listeners
+        nodeElement.addEventListener('mousedown', (e) => this.onNodeMouseDown(e, node.id));
+        nodeElement.addEventListener('click', (e) => this.onNodeClick(e, node.id));
+
+        // Handle events
+        nodeElement.querySelectorAll('.node-handle').forEach(handle => {
+            handle.addEventListener('mousedown', (e) => this.onHandleMouseDown(e, node.id, handle));
+        });
+    }
+
+    getNodeDescription(node) {
+        const config = node.config || {};
+        const keys = Object.keys(config);
+        
+        if (keys.length === 0) {
+            return '<span class="text-muted">Click to configure</span>';
+        }
+
+        const firstKey = keys[0];
+        const value = config[firstKey];
+        return `<small>${firstKey}: ${String(value).substring(0, 30)}${String(value).length > 30 ? '...' : ''}</small>`;
+    }
+
+    renderNodeData(data) {
+        if (!data) return '';
+        
+        let preview = '';
+        if (typeof data === 'object') {
+            if (Array.isArray(data)) {
+                preview = `Array (${data.length} items)`;
+            } else {
+                const keys = Object.keys(data);
+                preview = `Object (${keys.length} keys)`;
+            }
+        } else {
+            preview = String(data).substring(0, 50);
+        }
+
+        return `
+            <div class="node-data-preview">
+                <small><i class="fas fa-database"></i> ${preview}</small>
+            </div>
+        `;
+    }
+
+    onNodeMouseDown(e, nodeId) {
+        e.stopPropagation();
+        
+        if (!this.selectedNodes.has(nodeId)) {
+            if (!e.ctrlKey && !e.metaKey) {
+                this.clearSelection();
+            }
+            this.selectNode(nodeId);
+        }
+
+        this.isDragging = true;
+        this.lastMousePos = { x: e.clientX, y: e.clientY };
+    }
+
+    onNodeClick(e, nodeId) {
+        e.stopPropagation();
+        this.showNodeProperties(nodeId);
+    }
+
+    onHandleMouseDown(e, nodeId, handleElement) {
+        e.stopPropagation();
+        
+        const handleType = handleElement.classList.contains('input') ? 'input' : 'output';
+        const handleName = handleElement.getAttribute('data-handle');
+
+        if (handleType === 'output') {
+            this.startConnection(nodeId, handleName, e);
+        }
+    }
+
+    // Connection management
+    startConnection(sourceNodeId, sourceHandle, e) {
+        this.isConnecting = true;
+        this.connectionStart = {
+            nodeId: sourceNodeId,
+            handle: sourceHandle
+        };
+
+        this.createTempConnection();
+    }
+
+    createTempConnection() {
+        let tempLine = this.connectionsLayer.querySelector('.temp-connection');
+        if (!tempLine) {
+            tempLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            tempLine.setAttribute('class', 'temp-connection');
+            tempLine.setAttribute('stroke', '#999');
+            tempLine.setAttribute('stroke-width', '2');
+            tempLine.setAttribute('stroke-dasharray', '5,5');
+            tempLine.setAttribute('fill', 'none');
+            this.connectionsLayer.appendChild(tempLine);
+        }
+    }
+
+    updateTempConnection(e) {
+        const tempLine = this.connectionsLayer.querySelector('.temp-connection');
+        if (!tempLine || !this.connectionStart) return;
+
+        const sourceNode = this.nodes.get(this.connectionStart.nodeId);
+        const sourcePos = this.getHandlePosition(sourceNode, this.connectionStart.handle, 'output');
+        
+        const rect = document.getElementById('workflow-canvas').getBoundingClientRect();
+        const endPos = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+
+        const path = this.createConnectionPath(sourcePos, endPos);
+        tempLine.setAttribute('d', path);
+    }
+
+    finishConnection(e) {
+        this.isConnecting = false;
+
+        // Remove temp connection
+        const tempLine = this.connectionsLayer.querySelector('.temp-connection');
+        if (tempLine) {
+            tempLine.remove();
+        }
+
+        // Find target handle
+        const target = e.target;
+        if (target && target.classList.contains('node-handle') && target.classList.contains('input')) {
+            const targetNodeId = target.closest('.workflow-node').getAttribute('data-node-id');
+            const targetHandle = target.getAttribute('data-handle');
+
+            if (this.connectionStart && targetNodeId !== this.connectionStart.nodeId) {
+                this.addConnection(this.connectionStart.nodeId, this.connectionStart.handle, targetNodeId, targetHandle);
+            }
+        }
+
+        this.connectionStart = null;
+    }
+
+    addConnection(sourceNodeId, sourceHandle, targetNodeId, targetHandle) {
+        const connectionId = this.generateId();
+        const connection = {
+            id: connectionId,
+            source: sourceNodeId,
+            sourceHandle: sourceHandle,
+            target: targetNodeId,
+            targetHandle: targetHandle
+        };
+
+        this.connections.set(connectionId, connection);
+        this.renderConnection(connection);
+        this.markDirty();
+        return connectionId;
+    }
+
+    removeConnection(connectionId) {
+        this.connections.delete(connectionId);
+        const connectionElement = this.connectionsLayer.querySelector(`[data-connection-id="${connectionId}"]`);
+        if (connectionElement) {
+            connectionElement.remove();
+        }
+        this.selectedConnections.delete(connectionId);
+        this.markDirty();
+    }
+
+    renderConnection(connection) {
+        const sourceNode = this.nodes.get(connection.source);
+        const targetNode = this.nodes.get(connection.target);
+
+        if (!sourceNode || !targetNode) return;
+
+        const sourcePos = this.getHandlePosition(sourceNode, connection.sourceHandle, 'output');
+        const targetPos = this.getHandlePosition(targetNode, connection.targetHandle, 'input');
+
+        let connectionElement = this.connectionsLayer.querySelector(`[data-connection-id="${connection.id}"]`);
+
+        if (!connectionElement) {
+            connectionElement = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            connectionElement.setAttribute('data-connection-id', connection.id);
+            connectionElement.setAttribute('class', 'connection-line');
+            connectionElement.setAttribute('marker-end', 'url(#arrowhead)');
+            connectionElement.setAttribute('stroke', '#3b82f6');
+            connectionElement.setAttribute('stroke-width', '2');
+            connectionElement.setAttribute('fill', 'none');
+            this.connectionsLayer.appendChild(connectionElement);
+
+            connectionElement.addEventListener('click', (e) => this.onConnectionClick(e, connection.id));
+        }
+
+        const path = this.createConnectionPath(sourcePos, targetPos);
+        connectionElement.setAttribute('d', path);
+    }
+
+    getHandlePosition(node, handleName, type) {
+        const nodeElement = document.querySelector(`[data-node-id="${node.id}"]`);
+        if (!nodeElement) return { x: 0, y: 0 };
+
+        const handle = nodeElement.querySelector(`.node-handle.${type}[data-handle="${handleName}"]`);
+        if (!handle) return { x: 0, y: 0 };
+
+        const nodeRect = nodeElement.getBoundingClientRect();
+        const handleRect = handle.getBoundingClientRect();
+        const canvasRect = document.getElementById('workflow-canvas').getBoundingClientRect();
+
+        return {
+            x: handleRect.left + handleRect.width / 2 - canvasRect.left,
+            y: handleRect.top + handleRect.height / 2 - canvasRect.top
+        };
+    }
+
+    createConnectionPath(start, end) {
+        const dx = end.x - start.x;
+        const controlOffset = Math.max(50, Math.abs(dx) * 0.5);
+
+        return `M ${start.x} ${start.y} C ${start.x + controlOffset} ${start.y}, ${end.x - controlOffset} ${end.y}, ${end.x} ${end.y}`;
+    }
+
+    onConnectionClick(e, connectionId) {
+        e.stopPropagation();
+        this.clearSelection();
+        this.selectConnection(connectionId);
+    }
+
+    renderConnections() {
+        this.connections.forEach(connection => {
+            this.renderConnection(connection);
+        });
+    }
+
+    // Selection management
+    selectNode(nodeId) {
+        this.selectedNodes.add(nodeId);
+        const nodeElement = document.querySelector(`[data-node-id="${nodeId}"]`);
+        if (nodeElement) {
+            nodeElement.classList.add('selected');
+        }
+        this.showNodeProperties(nodeId);
+    }
+
+    selectConnection(connectionId) {
+        this.selectedConnections.add(connectionId);
+        const connectionElement = this.connectionsLayer.querySelector(`[data-connection-id="${connectionId}"]`);
+        if (connectionElement) {
+            connectionElement.classList.add('selected');
+        }
+    }
+
+    clearSelection() {
+        this.selectedNodes.forEach(nodeId => {
+            const nodeElement = document.querySelector(`[data-node-id="${nodeId}"]`);
+            if (nodeElement) {
+                nodeElement.classList.remove('selected');
+            }
+        });
+        this.selectedNodes.clear();
+
+        this.selectedConnections.forEach(connectionId => {
+            const connectionElement = this.connectionsLayer.querySelector(`[data-connection-id="${connectionId}"]`);
+            if (connectionElement) {
+                connectionElement.classList.remove('selected');
+            }
+        });
+        this.selectedConnections.clear();
+
+        this.hideProperties();
     }
 
     deleteSelected() {
-        if (this.selectedNode) {
-            this.deleteNode(this.selectedNode.id)
-        } else if (this.selectedConnection) {
-            this.deleteConnection(this.selectedConnection.id)
-        }
+        this.selectedConnections.forEach(connectionId => {
+            this.removeConnection(connectionId);
+        });
+
+        this.selectedNodes.forEach(nodeId => {
+            this.removeNode(nodeId);
+        });
     }
 
-    deleteNode(nodeId) {
-        // Remove connections
-        const connectionsToDelete = []
-        this.connections.forEach((connection, id) => {
-            if (connection.source === nodeId || connection.target === nodeId) {
-                connectionsToDelete.push(id)
-            }
-        })
+    // Properties panel
+    showNodeProperties(nodeId) {
+        const node = this.nodes.get(nodeId);
+        const nodeType = this.nodeTypes.get(node.type);
         
-        connectionsToDelete.forEach(id => this.deleteConnection(id))
-        
-        // Remove node
-        this.nodes.delete(nodeId)
-        const nodeElement = document.querySelector(`[data-node-id="${nodeId}"]`)
-        if (nodeElement) {
-            nodeElement.remove()
-        }
-        
-        this.hideProperties()
-        this.markDirty()
+        if (!node || !nodeType) return;
+
+        document.getElementById('panel-title').textContent = node.name;
+        document.getElementById('no-selection').style.display = 'none';
+        document.getElementById('node-properties').style.display = 'block';
+        document.getElementById('connection-properties').style.display = 'none';
+
+        const propertiesContainer = document.getElementById('node-properties');
+        propertiesContainer.innerHTML = this.generateNodePropertiesForm(node, nodeType);
+
+        this.setupFormEventListeners(propertiesContainer, nodeId);
     }
 
-    async saveWorkflow() {
-        if (this.isLoading) return
+    generateNodePropertiesForm(node, nodeType) {
+        let html = `
+            <div class="form-section">
+                <h4>General</h4>
+                <div class="form-group">
+                    <label for="node-name">Node Name</label>
+                    <input type="text" id="node-name" name="name" value="${node.name}" class="form-control">
+                </div>
+            </div>
+        `;
 
-        try {
-            this.isLoading = true
-            this.showLoading('Saving workflow...')
+        if (nodeType.config_schema && nodeType.config_schema.fields) {
+            html += `<div class="form-section"><h4>Configuration</h4>`;
 
-            const workflowData = this.getWorkflowData()
-            const url = this.options.workflowId 
-                ? `${this.options.apiBaseUrl}${this.options.workflowId}/`
-                : this.options.apiBaseUrl
+            nodeType.config_schema.fields.forEach(field => {
+                const value = node.config[field.name] || field.default || '';
+                html += this.generateFormField(field, value);
+            });
 
-            const method = this.options.workflowId ? 'PUT' : 'POST'
+            html += `</div>`;
+        }
 
-            const response = await fetch(url, {
-                method: method,
-                credentials: 'same-origin',
-                headers: {
-                    'Content-Type': 'application/json',
-                    // standard header used by many Django setups
-                    'X-CSRFToken': this.options.csrfToken,
-                    // alternative header name used in this project's settings
-                    'X-XSRF-TOKEN': this.options.csrfToken,
-                    // header added by CsrfTokenMiddleware on responses; include as extra fallback
-                    'X-CSRFTOKEN': this.options.csrfToken,
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify(workflowData),
-            })
+        // Data mapping section
+        html += `
+            <div class="form-section">
+                <h4>Data Mapping</h4>
+                <div class="form-group">
+                    <label for="input-mapping">Input Data Mapping</label>
+                    <textarea id="input-mapping" name="input_mapping" class="form-control" rows="4" placeholder="Map input data fields (JSON format)">${JSON.stringify(node.input_mapping || {}, null, 2)}</textarea>
+                    <small class="form-help">Map data from previous nodes. Use {{previous_node_id.field_name}} syntax</small>
+                </div>
+                <div class="form-group">
+                    <label for="output-mapping">Output Data Mapping</label>
+                    <textarea id="output-mapping" name="output_mapping" class="form-control" rows="4" placeholder="Map output data fields (JSON format)">${JSON.stringify(node.output_mapping || {}, null, 2)}</textarea>
+                    <small class="form-help">Transform output data structure</small>
+                </div>
+            </div>
+        `;
 
-            if (response.ok) {
-                const result = await response.json()
-                
-                if (!this.options.workflowId) {
-                    this.options.workflowId = result.id
-                    window.history.replaceState({}, '', `/workflow/${result.id}/edit/`)
+        // Show data preview if available
+        if (node.data) {
+            html += `
+                <div class="form-section">
+                    <h4>Data Preview</h4>
+                    <div class="data-preview">
+                        <pre>${JSON.stringify(node.data, null, 2)}</pre>
+                    </div>
+                </div>
+            `;
+        }
+
+        return html;
+    }
+
+    generateFormField(field, value) {
+        const fieldId = `field-${field.name}`;
+        const required = field.required ? 'required' : '';
+        const placeholder = field.placeholder || '';
+
+        let html = `<div class="form-group">`;
+        html += `<label for="${fieldId}">${field.label || this.formatFieldName(field.name)}</label>`;
+
+        switch (field.type) {
+            case 'text':
+                html += `<input type="text" id="${fieldId}" name="${field.name}" value="${value}" placeholder="${placeholder}" class="form-control" ${required}>`;
+                break;
+            case 'number':
+                html += `<input type="number" id="${fieldId}" name="${field.name}" value="${value}" placeholder="${placeholder}" class="form-control" ${required}>`;
+                break;
+            case 'textarea':
+                html += `<textarea id="${fieldId}" name="${field.name}" placeholder="${placeholder}" class="form-control" rows="3" ${required}>${value}</textarea>`;
+                break;
+            case 'select':
+                html += `<select id="${fieldId}" name="${field.name}" class="form-control" ${required}>`;
+                if (!field.required) {
+                    html += `<option value="">-- Select --</option>`;
                 }
+                field.options.forEach(option => {
+                    const selected = value === option ? 'selected' : '';
+                    html += `<option value="${option}" ${selected}>${option}</option>`;
+                });
+                html += `</select>`;
+                break;
+            case 'checkbox':
+                const checked = value === true || value === 'true' ? 'checked' : '';
+                html += `<label class="checkbox-label">
+                    <input type="checkbox" id="${fieldId}" name="${field.name}" ${checked}>
+                    ${field.label || this.formatFieldName(field.name)}
+                </label>`;
+                break;
+            default:
+                html += `<input type="text" id="${fieldId}" name="${field.name}" value="${value}" placeholder="${placeholder}" class="form-control" ${required}>`;
+        }
 
-                this.markClean()
-                this.showNotification('Workflow saved successfully', 'success')
-            } else {
-                const errorData = await response.json()
-                throw new Error(errorData.error || 'Failed to save workflow')
+        if (field.help) {
+            html += `<small class="form-help">${field.help}</small>`;
+        }
+
+        html += `</div>`;
+        return html;
+    }
+
+    setupFormEventListeners(container, nodeId) {
+        const formElements = container.querySelectorAll('input, select, textarea');
+        
+        formElements.forEach(element => {
+            element.addEventListener('change', (e) => {
+                this.handleFieldChange(e.target, nodeId);
+            });
+
+            element.addEventListener('input', (e) => {
+                if (e.target.type === 'text' || e.target.tagName === 'TEXTAREA') {
+                    clearTimeout(this.inputTimeout);
+                    this.inputTimeout = setTimeout(() => {
+                        this.handleFieldChange(e.target, nodeId);
+                    }, 500);
+                }
+            });
+        });
+    }
+
+    handleFieldChange(element, nodeId) {
+        const node = this.nodes.get(nodeId);
+        if (!node) return;
+
+        const fieldName = element.name;
+        let fieldValue = element.value;
+
+        if (element.type === 'checkbox') {
+            fieldValue = element.checked;
+        } else if (element.type === 'number') {
+            fieldValue = element.value ? Number(element.value) : null;
+        } else if (fieldName === 'input_mapping' || fieldName === 'output_mapping') {
+            try {
+                fieldValue = fieldValue ? JSON.parse(fieldValue) : {};
+            } catch (e) {
+                console.warn('Invalid JSON in field:', fieldName);
+                return;
             }
+        }
+
+        if (fieldName === 'name') {
+            node.name = fieldValue;
+        } else if (fieldName === 'input_mapping') {
+            node.input_mapping = fieldValue;
+        } else if (fieldName === 'output_mapping') {
+            node.output_mapping = fieldValue;
+        } else {
+            if (!node.config) {
+                node.config = {};
+            }
+            node.config[fieldName] = fieldValue;
+        }
+
+        this.renderNode(node);
+        this.markDirty();
+    }
+
+    hideProperties() {
+        document.getElementById('panel-title').textContent = 'Properties';
+        document.getElementById('no-selection').style.display = 'flex';
+        document.getElementById('node-properties').style.display = 'none';
+        document.getElementById('connection-properties').style.display = 'none';
+    }
+
+    formatFieldName(name) {
+        return name.split('_').map(word => 
+            word.charAt(0).toUpperCase() + word.slice(1)
+        ).join(' ');
+    }
+
+    // Workflow operations
+    async saveWorkflow() {
+        try {
+            this.showLoading('Saving workflow...');
+
+            const workflowData = {
+                name: document.getElementById('workflow-name')?.value || 'Untitled Workflow',
+                description: document.getElementById('workflow-description')?.value || '',
+                definition: this.getWorkflowDefinition()
+            };
+
+            let response;
+            if (this.options.workflowId) {
+                response = await this.apiCall(`/api/workflows/${this.options.workflowId}/`, 'PUT', workflowData);
+            } else {
+                response = await this.apiCall('/api/workflows/', 'POST', workflowData);
+                this.options.workflowId = response.id;
+            }
+
+            this.isDirty = false;
+            this.showNotification('Workflow saved successfully', 'success');
+            
         } catch (error) {
-            console.error('Save error:', error)
-            this.showNotification(error.message || 'Failed to save workflow', 'error')
+            console.error('Save error:', error);
+            this.showNotification('Failed to save workflow: ' + error.message, 'error');
         } finally {
-            this.isLoading = false
-            this.hideLoading()
+            this.hideLoading();
         }
     }
 
     async testWorkflow() {
         if (!this.options.workflowId) {
-            // Save workflow first
-            await this.saveWorkflow()
-            if (!this.options.workflowId) {
-                this.showNotification('Failed to save workflow before testing', 'error')
-                return
-            }
+            await this.saveWorkflow();
         }
 
         try {
-            this.showLoading('Testing workflow...')
+            this.showLoading('Testing workflow...');
+            this.clearExecutionResults();
 
-            // CSRF helper - read from meta token or csrftoken cookie
-            function getCookie(name) {
-                const value = `; ${document.cookie}`;
-                const parts = value.split(`; ${name}=`);
-                if (parts.length === 2) return parts.pop().split(';').shift();
-            }
-            const meta = document.querySelector('meta[name="csrf-token"]');
-            const csrfToken = meta && meta.getAttribute('content') ? meta.getAttribute('content') : (getCookie('csrftoken') || this.options.csrfToken);
+            const response = await this.apiCall(`/api/workflows/${this.options.workflowId}/test/`, 'POST', {
+                input_data: {}
+            });
 
-            const response = await fetch(`/api/workflows/${this.options.workflowId}/test/`, {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': csrfToken || '',
-                    'X-XSRF-TOKEN': csrfToken || '',
-                    'X-CSRFTOKEN': csrfToken || '',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify({ 
-                    input_data: {},
-                    test_mode: true 
-                }),
-            })
+            this.displayTestResults(response);
+            this.showNotification('Workflow test completed', 'success');
 
-            if (response.ok) {
-                const result = await response.json()
-                this.showNotification(`Workflow test ${result.success ? 'completed successfully' : 'failed'}`, result.success ? 'success' : 'error')
-                this.switchTab('logs')
-                
-                // Update node statuses
-                if (result.node_executions) {
-                    this.updateNodeStatuses(result.node_executions)
-                }
-                
-                // Display logs
-                this.displayTestResults(result)
-            } else {
-                const errorData = await response.json()
-                throw new Error(errorData.error || 'Failed to start workflow test')
-            }
         } catch (error) {
-            console.error('Test error:', error)
-            this.showNotification(error.message || 'Failed to test workflow', 'error')
+            console.error('Test error:', error);
+            this.showNotification('Workflow test failed: ' + error.message, 'error');
         } finally {
-            this.hideLoading()
+            this.hideLoading();
         }
     }
-    
-    displayTestResults(result) {
-        const logsContainer = document.getElementById('execution-logs')
-        if (!logsContainer) return
 
-        let logsHtml = `
-            <div class="test-results">
-                <div class="test-summary">
-                    <strong>Test Results:</strong> ${result.success ? 'SUCCESS' : 'FAILED'}
-                    ${result.duration_seconds ? ` (${result.duration_seconds.toFixed(2)}s)` : ''}
-                </div>
-            </div>
-        `
-
-        if (result.node_executions && result.node_executions.length > 0) {
-            result.node_executions.forEach(nodeExec => {
-                const timestamp = new Date().toLocaleTimeString()
-                const levelClass = nodeExec.status === 'failed' ? 'log-error' : 'log-info'
-                const message = nodeExec.error_message || `Node executed successfully`
-
-                logsHtml += `
-                    <div class="log-entry ${levelClass}">
-                        <span class="log-timestamp">[${timestamp}]</span>
-                        <span class="log-level">${nodeExec.status.toUpperCase()}</span>
-                        <span class="log-node">${nodeExec.node_name}:</span>
-                        <span class="log-message">${message}</span>
-                        ${nodeExec.duration_ms ? `<span class="log-duration">(${nodeExec.duration_ms}ms)</span>` : ''}
-                    </div>
-                `
-            })
-        }
-
-        logsContainer.innerHTML = logsHtml
-        logsContainer.scrollTop = logsContainer.scrollHeight
-    }
-    async pollExecutionStatus(executionId) {
-        const maxPolls = 60
-        let pollCount = 0
-
-        const poll = async () => {
-            try {
-                const response = await fetch(`/workflow/api/executions/${executionId}/`)
-                if (response.ok) {
-                    const execution = await response.json()
-                    
-                    // Update node statuses
-                    this.updateNodeStatuses(execution.node_executions || [])
-
-                    if (execution.status === 'running' || execution.status === 'queued') {
-                        if (pollCount < maxPolls) {
-                            pollCount++
-                            setTimeout(poll, 2000)
-                        }
-                    } else {
-                        this.loadExecutionLogs(executionId)
-                        this.showNotification(`Workflow ${execution.status}`, execution.status === 'success' ? 'success' : 'error')
-                    }
+    displayTestResults(results) {
+        // Update node statuses and data
+        if (results.node_executions) {
+            results.node_executions.forEach(nodeExecution => {
+                const node = this.nodes.get(nodeExecution.node_id);
+                if (node) {
+                    node.status = nodeExecution.status;
+                    node.data = nodeExecution.output_data;
+                    this.renderNode(node);
                 }
-            } catch (error) {
-                console.error('Polling error:', error)
-            }
+            });
         }
 
-        poll()
+        // Show execution logs
+        this.displayExecutionLogs(results);
+        this.switchTab('logs');
     }
 
-    updateNodeStatuses(nodeExecutions) {
-        // Reset all node statuses
-        this.nodes.forEach(node => {
-            node.status = ''
-        })
+    displayExecutionLogs(results) {
+        const logsContainer = document.getElementById('execution-logs');
+        let logsHtml = '';
 
-        // Update based on execution results
-        nodeExecutions.forEach(nodeExec => {
-            const node = this.nodes.get(nodeExec.node_id)
-            if (node) {
-                node.status = nodeExec.status
-                node.data = nodeExec.output_data || {}
-                this.renderNode(node)
-            }
-        })
-
-        // Update data preview if node is selected
-        if (this.selectedNode) {
-            const dataPreview = document.getElementById('node-data-preview')
-            if (dataPreview) {
-                dataPreview.textContent = JSON.stringify(this.selectedNode.data || {}, null, 2)
-            }
-        }
-    }
-
-    async loadExecutionLogs(executionId) {
-        try {
-            const response = await fetch(`/workflow/api/executions/${executionId}/logs/`)
-            if (response.ok) {
-                const data = await response.json()
-                this.displayExecutionLogs(data.logs)
-            }
-        } catch (error) {
-            console.error('Failed to load execution logs:', error)
-        }
-    }
-
-    displayExecutionLogs(logs) {
-        const logsContainer = document.getElementById('execution-logs')
-        if (!logsContainer) return
-
-        if (!logs || logs.length === 0) {
-            logsContainer.innerHTML = '<div class="log-placeholder"><i class="fas fa-info-circle"></i><p>No logs available</p></div>'
-            return
-        }
-
-        let logsHtml = ''
-        logs.forEach(log => {
-            const timestamp = new Date(log.timestamp).toLocaleTimeString()
-            const levelClass = `log-${log.level.toLowerCase()}`
-
-            logsHtml += `
-                <div class="log-entry ${levelClass}">
-                    <span class="log-timestamp">[${timestamp}]</span>
-                    <span class="log-level">${log.level}</span>
-                    <span class="log-node">${log.node_name}:</span>
-                    <span class="log-message">${log.message}</span>
-                    ${log.duration_ms ? `<span class="log-duration">(${log.duration_ms}ms)</span>` : ''}
+        if (results.node_executions && results.node_executions.length > 0) {
+            results.node_executions.forEach(nodeExecution => {
+                const statusClass = nodeExecution.status === 'success' ? 'log-info' : 'log-error';
+                logsHtml += `
+                    <div class="log-entry ${statusClass}">
+                        <span class="log-timestamp">${new Date().toLocaleTimeString()}</span>
+                        <span class="log-level">${nodeExecution.status.toUpperCase()}</span>
+                        <span class="log-node">${nodeExecution.node_name}</span>
+                        <span class="log-message">Node executed successfully</span>
+                        ${nodeExecution.duration_ms ? `<span class="log-duration">${nodeExecution.duration_ms}ms</span>` : ''}
+                    </div>
+                `;
+            });
+        } else {
+            logsHtml = `
+                <div class="log-placeholder">
+                    <i class="fas fa-info-circle"></i>
+                    <p>No execution logs available</p>
                 </div>
-            `
-        })
+            `;
+        }
 
-        logsContainer.innerHTML = logsHtml
-        logsContainer.scrollTop = logsContainer.scrollHeight
+        logsContainer.innerHTML = logsHtml;
     }
 
-    getWorkflowData() {
-        const nameInput = document.getElementById('workflow-name')
-        
-        const nodes = []
-        const connections = []
+    clearExecutionResults() {
+        this.nodes.forEach(node => {
+            node.status = 'idle';
+            node.data = null;
+            this.renderNode(node);
+        });
+    }
+
+    getWorkflowDefinition() {
+        const nodes = [];
+        const connections = [];
 
         this.nodes.forEach(node => {
             nodes.push({
@@ -1324,10 +1075,10 @@ class WorkflowEditor {
                 name: node.name,
                 position: node.position,
                 config: node.config || {},
-                continue_on_error: node.continue_on_error || false,
-                timeout: node.timeout || 30
-            })
-        })
+                input_mapping: node.input_mapping || {},
+                output_mapping: node.output_mapping || {}
+            });
+        });
 
         this.connections.forEach(connection => {
             connections.push({
@@ -1335,101 +1086,136 @@ class WorkflowEditor {
                 target: connection.target,
                 source_output: connection.sourceHandle || 'main',
                 target_input: connection.targetHandle || 'main'
-            })
-        })
+            });
+        });
 
-        return {
-            name: nameInput ? nameInput.value : 'Untitled Workflow',
-            description: document.getElementById('workflow-description')?.value || '',
-            status: 'draft',
-            definition: { nodes, connections }
-        }
+        return { nodes, connections };
     }
 
-    loadWorkflow() {
+    loadWorkflowData() {
         if (this.options.workflowData && this.options.workflowData.nodes) {
             this.options.workflowData.nodes.forEach(nodeData => {
+                const nodeId = nodeData.id || this.generateId();
                 const node = {
-                    id: nodeData.id,
+                    id: nodeId,
                     type: nodeData.type,
                     name: nodeData.name,
                     position: nodeData.position || { x: 100, y: 100 },
                     config: nodeData.config || {},
-                    data: {}
-                }
-                this.nodes.set(node.id, node)
-                this.renderNode(node)
-            })
+                    input_mapping: nodeData.input_mapping || {},
+                    output_mapping: nodeData.output_mapping || {},
+                    status: 'idle',
+                    data: null
+                };
+                this.nodes.set(nodeId, node);
+                this.renderNode(node);
+            });
+        }
 
-            if (this.options.workflowData.connections) {
-                this.options.workflowData.connections.forEach(connData => {
-                    const connection = {
-                        id: this.generateId(),
-                        source: connData.source,
-                        target: connData.target,
-                        sourceHandle: connData.source_output || 'main',
-                        targetHandle: connData.target_input || 'main'
-                    }
-                    this.connections.set(connection.id, connection)
-                    this.renderConnection(connection)
-                })
-            }
+        if (this.options.workflowData && this.options.workflowData.connections) {
+            this.options.workflowData.connections.forEach(connectionData => {
+                const connectionId = this.generateId();
+                const connection = {
+                    id: connectionId,
+                    source: connectionData.source,
+                    target: connectionData.target,
+                    sourceHandle: connectionData.source_output || 'output',
+                    targetHandle: connectionData.target_input || 'input'
+                };
+                this.connections.set(connectionId, connection);
+                this.renderConnection(connection);
+            });
         }
     }
 
-    switchTab(tabName) {
-        document.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.tab === tabName)
-        })
-
-        document.querySelectorAll('.tab-content').forEach(content => {
-            content.classList.toggle('active', content.id === `${tabName}-tab`)
-        })
-    }
-
-    filterNodes(searchTerm) {
-        const term = searchTerm.toLowerCase()
-        
-        document.querySelectorAll('.palette-node').forEach(node => {
-            const name = node.querySelector('.node-name').textContent.toLowerCase()
-            const matches = name.includes(term)
-            node.style.display = matches ? 'flex' : 'none'
-        })
-    }
-
-    getDefaultConfig(nodeType) {
-        const config = {}
-        if (nodeType.config_schema && nodeType.config_schema.fields) {
-            nodeType.config_schema.fields.forEach(field => {
-                if (field.default !== undefined) {
-                    config[field.name] = field.default
-                }
-            })
-        }
-        return config
-    }
-
+    // Utility methods
     generateId() {
-        return 'node_' + Math.random().toString(36).substr(2, 9)
+        return 'node_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    updateTransform() {
+        const transform = `translate(${this.transform.x}px, ${this.transform.y}px) scale(${this.transform.scale})`;
+        this.nodesContainer.style.transform = transform;
+        this.connectionsLayer.style.transform = transform;
+    }
+
+    updateZoomDisplay() {
+        const zoomLevel = document.getElementById('zoom-level');
+        if (zoomLevel) {
+            zoomLevel.textContent = `${Math.round(this.transform.scale * 100)}%`;
+        }
+    }
+
+    zoomIn() {
+        this.transform.scale = Math.min(3, this.transform.scale * 1.2);
+        this.updateTransform();
+        this.updateZoomDisplay();
+    }
+
+    zoomOut() {
+        this.transform.scale = Math.max(0.1, this.transform.scale * 0.8);
+        this.updateTransform();
+        this.updateZoomDisplay();
+    }
+
+    centerView() {
+        if (this.nodes.size === 0) return;
+
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+        this.nodes.forEach(node => {
+            minX = Math.min(minX, node.position.x);
+            minY = Math.min(minY, node.position.y);
+            maxX = Math.max(maxX, node.position.x + 200);
+            maxY = Math.max(maxY, node.position.y + 100);
+        });
+
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+
+        const containerRect = document.getElementById('workflow-canvas').getBoundingClientRect();
+        this.transform.x = containerRect.width / 2 - centerX * this.transform.scale;
+        this.transform.y = containerRect.height / 2 - centerY * this.transform.scale;
+
+        this.updateTransform();
+    }
+
+    fitToView() {
+        if (this.nodes.size === 0) return;
+
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+        this.nodes.forEach(node => {
+            minX = Math.min(minX, node.position.x);
+            minY = Math.min(minY, node.position.y);
+            maxX = Math.max(maxX, node.position.x + 200);
+            maxY = Math.max(maxY, node.position.y + 100);
+        });
+
+        const workflowWidth = maxX - minX;
+        const workflowHeight = maxY - minY;
+
+        const containerRect = document.getElementById('workflow-canvas').getBoundingClientRect();
+        const scaleX = (containerRect.width - 100) / workflowWidth;
+        const scaleY = (containerRect.height - 100) / workflowHeight;
+
+        this.transform.scale = Math.min(scaleX, scaleY, 1);
+
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+
+        this.transform.x = containerRect.width / 2 - centerX * this.transform.scale;
+        this.transform.y = containerRect.height / 2 - centerY * this.transform.scale;
+
+        this.updateTransform();
+        this.updateZoomDisplay();
     }
 
     markDirty() {
-        this.isDirty = true
-        this.updateSaveButton()
-    }
-
-    markClean() {
-        this.isDirty = false
-        this.updateSaveButton()
-    }
-
-    updateSaveButton() {
-        const saveBtn = document.getElementById('save-btn')
+        this.isDirty = true;
+        const saveBtn = document.getElementById('save-btn');
         if (saveBtn) {
-            saveBtn.classList.toggle('btn-warning', this.isDirty)
-            saveBtn.innerHTML = this.isDirty 
-                ? '<i class="fas fa-save"></i> Save*' 
-                : '<i class="fas fa-save"></i> Save'
+            saveBtn.innerHTML = '<i class="fas fa-save"></i> Save*';
         }
     }
 
@@ -1437,36 +1223,82 @@ class WorkflowEditor {
         if (this.options.autoSave) {
             setInterval(() => {
                 if (this.isDirty && !this.isLoading) {
-                    this.saveWorkflow()
+                    this.saveWorkflow();
                 }
-            }, 30000)
+            }, 30000); // Auto-save every 30 seconds
         }
+    }
+
+    // API helper
+    async apiCall(url, method = 'GET', data = null) {
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': this.getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest'
+        };
+
+        const config = {
+            method,
+            headers,
+            credentials: 'same-origin'
+        };
+
+        if (data && method !== 'GET') {
+            config.body = JSON.stringify(data);
+        }
+
+        const response = await fetch(url, config);
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || errorData.error || `HTTP ${response.status}`);
+        }
+
+        return await response.json();
+    }
+
+    getCsrfToken() {
+        // Try multiple methods to get CSRF token
+        const metaToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        if (metaToken) return metaToken;
+
+        const cookieToken = this.getCookie('csrftoken');
+        if (cookieToken) return cookieToken;
+
+        const inputToken = document.querySelector('[name="csrfmiddlewaretoken"]')?.value;
+        if (inputToken) return inputToken;
+
+        return this.options.csrfToken || '';
+    }
+
+    getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+        return null;
     }
 
     showLoading(message = 'Loading...') {
-        const overlay = document.getElementById('loading-overlay')
+        const overlay = document.getElementById('loading-overlay');
         if (overlay) {
-            const spinner = overlay.querySelector('.loading-spinner p')
-            if (spinner) spinner.textContent = message
-            overlay.style.display = 'flex'
+            overlay.querySelector('p').textContent = message;
+            overlay.style.display = 'flex';
         }
+        this.isLoading = true;
     }
 
     hideLoading() {
-        const overlay = document.getElementById('loading-overlay')
+        const overlay = document.getElementById('loading-overlay');
         if (overlay) {
-            overlay.style.display = 'none'
+            overlay.style.display = 'none';
         }
+        this.isLoading = false;
     }
 
     showNotification(message, type = 'info') {
-        const notification = document.createElement('div')
-        notification.className = `notification notification-${type}`
-        notification.innerHTML = `
-            <i class="fas ${this.getNotificationIcon(type)}"></i>
-            <span>${message}</span>
-        `
-
+        const notification = document.createElement('div');
+        notification.className = `notification notification-${type}`;
+        notification.textContent = message;
         notification.style.cssText = `
             position: fixed;
             top: 20px;
@@ -1476,37 +1308,24 @@ class WorkflowEditor {
             color: white;
             font-weight: 500;
             z-index: 10000;
-            display: flex;
-            align-items: center;
-            gap: 8px;
             animation: slideIn 0.3s ease;
-        `
+        `;
 
         const colors = {
             success: '#10b981',
             error: '#ef4444',
             warning: '#f59e0b',
-            info: '#3b82f6',
-        }
+            info: '#3b82f6'
+        };
 
-        notification.style.backgroundColor = colors[type] || colors.info
-        document.body.appendChild(notification)
+        notification.style.backgroundColor = colors[type] || colors.info;
+        document.body.appendChild(notification);
 
         setTimeout(() => {
-            notification.remove()
-        }, 3000)
-    }
-
-    getNotificationIcon(type) {
-        const icons = {
-            success: 'fa-check-circle',
-            error: 'fa-times-circle',
-            warning: 'fa-exclamation-triangle',
-            info: 'fa-info-circle',
-        }
-        return icons[type] || icons.info
+            notification.remove();
+        }, 3000);
     }
 }
 
-// Global instance
-window.WorkflowEditor = WorkflowEditor
+// Export for global use
+window.WorkflowEditor = WorkflowEditor;

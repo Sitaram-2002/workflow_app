@@ -6,6 +6,8 @@ from django.shortcuts import get_object_or_404
 from django.db.models import Q, Count, Avg
 from django.utils import timezone
 from django.http import JsonResponse
+from django.views.decorators.csrf import ensure_csrf_cookie
+from django.utils.decorators import method_decorator
 from datetime import timedelta
 import json
 import uuid
@@ -22,12 +24,14 @@ from .serializers import (
 from .engine import WorkflowEngine
 from .tasks import execute_workflow_task
 
+@method_decorator(ensure_csrf_cookie, name='dispatch')
 class NodeTypeViewSet(viewsets.ReadOnlyModelViewSet):
     """API for node types"""
     queryset = NodeType.objects.filter(is_active=True)
     serializer_class = NodeTypeSerializer
     permission_classes = [IsAuthenticated]
 
+@method_decorator(ensure_csrf_cookie, name='dispatch')
 class WorkflowViewSet(viewsets.ModelViewSet):
     """API for workflows"""
     serializer_class = WorkflowSerializer
@@ -193,6 +197,7 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         
         return Response(export_data)
 
+@method_decorator(ensure_csrf_cookie, name='dispatch')
 class WorkflowExecutionViewSet(viewsets.ReadOnlyModelViewSet):
     """API for workflow executions"""
     serializer_class = WorkflowExecutionSerializer
@@ -221,6 +226,7 @@ class WorkflowExecutionViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+@method_decorator(ensure_csrf_cookie, name='dispatch')
 class WorkflowVariableViewSet(viewsets.ModelViewSet):
     """API for workflow variables"""
     serializer_class = WorkflowVariableSerializer
@@ -232,6 +238,7 @@ class WorkflowVariableViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(created_by_id=self.request.user.id)
 
+@method_decorator(ensure_csrf_cookie, name='dispatch')
 class WorkflowWebhookViewSet(viewsets.ModelViewSet):
     """API for workflow webhooks"""
     serializer_class = WorkflowWebhookSerializer
@@ -242,6 +249,7 @@ class WorkflowWebhookViewSet(viewsets.ModelViewSet):
             workflow__created_by_id=self.request.user.id
         )
 
+@method_decorator(ensure_csrf_cookie, name='dispatch')
 class WorkflowTemplateViewSet(viewsets.ModelViewSet):
     """API for workflow templates"""
     serializer_class = WorkflowTemplateSerializer
@@ -283,6 +291,7 @@ class WorkflowTemplateViewSet(viewsets.ModelViewSet):
 # Additional API endpoints
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@ensure_csrf_cookie
 def dashboard_stats_api(request):
     """Get dashboard statistics"""
     user_workflows = Workflow.objects.filter(created_by_id=request.user.id)
@@ -323,6 +332,7 @@ def dashboard_stats_api(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@ensure_csrf_cookie
 def recent_activity_api(request):
     """Get recent activity for dashboard"""
     user_workflows = Workflow.objects.filter(created_by_id=request.user.id)
@@ -358,6 +368,7 @@ def recent_activity_api(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@ensure_csrf_cookie
 def execution_logs_api(request, execution_id):
     """Get execution logs"""
     try:
@@ -395,6 +406,7 @@ def execution_logs_api(request, execution_id):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@ensure_csrf_cookie
 def test_workflow_api(request, workflow_id):
     """Test a workflow with sample data"""
     try:

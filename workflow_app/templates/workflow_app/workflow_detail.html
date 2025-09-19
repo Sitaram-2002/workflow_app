@@ -289,7 +289,7 @@ async function apiCall(url, method = 'POST', body = {}) {
 
 function executeWorkflow() {
     if (confirm('Are you sure you want to execute this workflow?')) {
-        apiCall(`/api/workflows/{{ workflow.id }}/execute/`)
+        apiCall(`/workflow/api/workflows/{{ workflow.id }}/execute/`)
             .then(data => {
                 alert('Workflow execution started successfully!');
                 location.reload();
@@ -303,11 +303,11 @@ function executeWorkflow() {
 
 function duplicateWorkflow() {
     if (confirm('Create a copy of this workflow?')) {
-        apiCall(`/api/workflows/{{ workflow.id }}/duplicate/`)
+        apiCall(`/workflow/api/workflows/{{ workflow.id }}/duplicate/`)
             .then(data => {
                 if (data.id) {
                     alert('Workflow duplicated successfully!');
-                    window.location.href = `/workflow/${data.id}/edit/`;
+                    window.location.href = `/workflow/workflows/${data.id}/edit/`;
                 }
             })
             .catch(error => {
@@ -319,12 +319,12 @@ function duplicateWorkflow() {
 
 function exportWorkflow() {
     // This action is a GET request and doesn't need a CSRF token
-    window.open(`/api/workflows/{{ workflow.id }}/export/`, '_blank');
+    window.open(`/workflow/api/workflows/{{ workflow.id }}/export/`, '_blank');
 }
 
 function activateWorkflow() {
     if (confirm('Activate this workflow?')) {
-        apiCall(`/api/workflows/{{ workflow.id }}/activate/`)
+        apiCall(`/workflow/api/workflows/{{ workflow.id }}/activate/`)
             .then(() => {
                 alert('Workflow activated successfully!');
                 location.reload();
@@ -338,7 +338,7 @@ function activateWorkflow() {
 
 function deactivateWorkflow() {
     if (confirm('Deactivate this workflow?')) {
-        apiCall(`/api/workflows/{{ workflow.id }}/deactivate/`)
+        apiCall(`/workflow/api/workflows/{{ workflow.id }}/deactivate/`)
             .then(() => {
                 alert('Workflow deactivated successfully!');
                 location.reload();

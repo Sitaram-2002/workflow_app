@@ -183,7 +183,7 @@ function useTemplate(templateId) {
         .then(data => {
             if (data.id) {
                 alert('Workflow created from template successfully!');
-                window.location.href = `/workflow/${data.id}/edit/`;
+                window.location.href = `/workflow/workflows/${data.id}/edit/`;
             } else {
                 alert('Error creating workflow from template');
             }

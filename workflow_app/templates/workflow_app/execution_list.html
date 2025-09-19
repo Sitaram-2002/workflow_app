@@ -235,7 +235,7 @@
 
 <script>
 function viewExecutionDetails(executionId) {
-    fetch(`/api/executions/${executionId}/logs/`, { credentials: 'same-origin' })
+    fetch(`/workflow/api/executions/${executionId}/logs/`, { credentials: 'same-origin' })
         .then(response => response.json())
         .then(data => {
             document.getElementById('execution-title').textContent = `Execution ${executionId}`;
@@ -284,7 +284,7 @@ function cancelExecution(executionId) {
         const tokenElem = document.querySelector('meta[name="csrf-token"]');
         const csrfToken = tokenElem && tokenElem.getAttribute('content') ? tokenElem.getAttribute('content') : getCookie('csrftoken');
 
-        fetch(`/api/executions/${executionId}/cancel/`, {
+        fetch(`/workflow/api/executions/${executionId}/cancel/`, {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
@@ -320,10 +320,10 @@ function retryExecution(executionId) {
         const tokenElem = document.querySelector('meta[name="csrf-token"]');
         const csrfToken = tokenElem && tokenElem.getAttribute('content') ? tokenElem.getAttribute('content') : getCookie('csrftoken');
 
-        fetch(`/api/executions/${executionId}/`, { credentials: 'same-origin' })
+        fetch(`/workflow/api/executions/${executionId}/`, { credentials: 'same-origin' })
             .then(response => response.json())
             .then(execution => {
-                return fetch(`/api/workflows/${execution.workflow}/execute/`, {
+                return fetch(`/workflow/api/workflows/${execution.workflow}/execute/`, {
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: {

@@ -18,6 +18,9 @@ class DatabaseQueryHandler(BaseNodeHandler):
         fields = config.get('fields', '*')
         limit = config.get('limit', 100)
         
+        # Handle input data mapping
+        mapped_input = self._apply_input_mapping(input_data, config.get('input_mapping', {}))
+        
         if not table_name:
             raise ValueError("Table name is required")
         
@@ -28,7 +31,7 @@ class DatabaseQueryHandler(BaseNodeHandler):
             
             if conditions:
                 # Handle parameterized conditions from input data
-                resolved_conditions = self._resolve_conditions(conditions, input_data)
+                resolved_conditions = self._resolve_conditions(conditions, mapped_input)
                 query += f" WHERE {resolved_conditions['sql']}"
                 params = resolved_conditions['params']
             
@@ -37,7 +40,7 @@ class DatabaseQueryHandler(BaseNodeHandler):
                 
         elif query_type == 'INSERT':
             # For INSERT, expect data in input
-            data = input_data.get('data', {})
+            data = mapped_input.get('data', {})
             if not data:
                 raise ValueError("No data provided for INSERT operation")
             
@@ -62,7 +65,7 @@ class DatabaseQueryHandler(BaseNodeHandler):
                 params = [data[col] for col in columns]
                 
         elif query_type == 'UPDATE':
-            data = input_data.get('data', {})
+            data = mapped_input.get('data', {})
             if not data or not conditions:
                 raise ValueError("Data and conditions are required for UPDATE operation")
             
@@ -71,7 +74,7 @@ class DatabaseQueryHandler(BaseNodeHandler):
             set_clause = ', '.join([f"{col} = %s" for col in set_columns])
             
             # Build WHERE clause
-            resolved_conditions = self._resolve_conditions(conditions, input_data)
+            resolved_conditions = self._resolve_conditions(conditions, mapped_input)
             
             query = f"UPDATE {table_name} SET {set_clause} WHERE {resolved_conditions['sql']}"
             params = [data[col] for col in set_columns] + resolved_conditions['params']
@@ -80,7 +83,7 @@ class DatabaseQueryHandler(BaseNodeHandler):
             if not conditions:
                 raise ValueError("Conditions are required for DELETE operation")
             
-            resolved_conditions = self._resolve_conditions(conditions, input_data)
+            resolved_conditions = self._resolve_conditions(conditions, mapped_input)
             query = f"DELETE FROM {table_name} WHERE {resolved_conditions['sql']}"
             params = resolved_conditions['params']
         else:
@@ -93,7 +96,7 @@ class DatabaseQueryHandler(BaseNodeHandler):
                     columns = [col[0] for col in cursor.description]
                     results = [dict(zip(columns, row)) for row in cursor.fetchall()]
                     
-                    return {
+                    output_data = {
                         'data': results,
                         'count': len(results),
                         'success': True,
@@ -103,7 +106,7 @@ class DatabaseQueryHandler(BaseNodeHandler):
                     cursor.executemany(query, params)
                     affected_rows = cursor.rowcount
                     
-                    return {
+                    output_data = {
                         'data': {'affected_rows': affected_rows},
                         'success': True,
                         'message': f"Inserted {affected_rows} rows"
@@ -112,15 +115,61 @@ class DatabaseQueryHandler(BaseNodeHandler):
                     cursor.execute(query, params)
                     affected_rows = cursor.rowcount
                     
-                    return {
+                    output_data = {
                         'data': {'affected_rows': affected_rows},
                         'success': True,
                         'message': f"{query_type} operation affected {affected_rows} rows"
                     }
+            
+            # Apply output mapping
+            return self._apply_output_mapping(output_data, config.get('output_mapping', {}))
                     
         except Exception as e:
             self.log_execution(f"Database query failed: {str(e)}", 'error')
             raise ValueError(f"Database query failed: {str(e)}")
+    
+    def _apply_input_mapping(self, input_data: Dict[str, Any], mapping: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply input data mapping"""
+        if not mapping:
+            return input_data
+        
+        mapped_data = {}
+        for target_field, source_path in mapping.items():
+            value = self._get_nested_value(input_data, source_path)
+            self._set_nested_value(mapped_data, target_field, value)
+        
+        return mapped_data if mapped_data else input_data
+    
+    def _apply_output_mapping(self, output_data: Dict[str, Any], mapping: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply output data mapping"""
+        if not mapping:
+            return output_data
+        
+        mapped_data = {}
+        for target_field, source_path in mapping.items():
+            value = self._get_nested_value(output_data, source_path)
+            self._set_nested_value(mapped_data, target_field, value)
+        
+        # Preserve original structure if no mapping
+        if not mapped_data:
+            return output_data
+        
+        # Merge with original data
+        result = output_data.copy()
+        result.update(mapped_data)
+        return result
+    
+    def _set_nested_value(self, data: Dict[str, Any], path: str, value: Any):
+        """Set nested value using dot notation"""
+        parts = path.split('.')
+        current = data
+        
+        for part in parts[:-1]:
+            if part not in current:
+                current[part] = {}
+            current = current[part]
+        
+        current[parts[-1]] = value
     
     def _resolve_conditions(self, conditions: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Resolve conditions with input data parameters"""

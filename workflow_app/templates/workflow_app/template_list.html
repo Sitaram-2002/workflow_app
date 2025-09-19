@@ -192,7 +192,7 @@ function useTemplate(templateId) {
         const tokenElem = document.querySelector('meta[name="csrf-token"]');
         const csrfToken = tokenElem && tokenElem.getAttribute('content') ? tokenElem.getAttribute('content') : getCookie('csrftoken');
 
-        fetch(`/api/templates/${templateId}/use_template/`, {
+        fetch(`/workflow/api/templates/${templateId}/use_template/`, {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
@@ -204,7 +204,7 @@ function useTemplate(templateId) {
         .then(data => {
             if (data.id) {
                 alert('Workflow created from template successfully!');
-                window.location.href = `/workflows/${data.id}/edit/`;
+                window.location.href = `/workflow/workflows/${data.id}/edit/`;
             } else {
                 alert('Error creating workflow from template');
             }
@@ -217,7 +217,7 @@ function useTemplate(templateId) {
 }
 
 function previewTemplate(templateId) {
-    fetch(`/api/templates/${templateId}/`, { credentials: 'same-origin' })
+    fetch(`/workflow/api/templates/${templateId}/`, { credentials: 'same-origin' })
         .then(response => response.json())
         .then(data => {
             document.getElementById('preview-title').textContent = data.name;
@@ -270,7 +270,7 @@ function duplicateTemplate(templateId) {
         const tokenElem = document.querySelector('meta[name="csrf-token"]');
         const csrfToken = tokenElem && tokenElem.getAttribute('content') ? tokenElem.getAttribute('content') : getCookie('csrftoken');
 
-        fetch(`/api/templates/${templateId}/duplicate/`, {
+        fetch(`/workflow/api/templates/${templateId}/duplicate/`, {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
@@ -304,7 +304,7 @@ function deleteTemplate(templateId) {
         const tokenElem = document.querySelector('meta[name="csrf-token"]');
         const csrfToken = tokenElem && tokenElem.getAttribute('content') ? tokenElem.getAttribute('content') : getCookie('csrftoken');
 
-        fetch(`/api/templates/${templateId}/`, {
+        fetch(`/workflow/api/templates/${templateId}/`, {
             method: 'DELETE',
             credentials: 'same-origin',
             headers: {

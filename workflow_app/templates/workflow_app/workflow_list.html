@@ -1,10 +1,10 @@
 {% extends 'workflow_app/base.html' %}
 {% load static %}
 
-{% block title %}My Workflows
-<meta name="csrf-token" content="{{ csrf_token }}">  {% endblock %}
+{% block title %}My Workflows{% endblock %}
 
 {% block extra_css %}
+<meta name="csrf-token" content="{{ csrf_token }}">
 <link rel="stylesheet" href="{% static 'workflow_app/css/workflow-list.css' %}">
 {% endblock %}
 
@@ -149,7 +149,7 @@ function executeWorkflow(workflowId) {
         const meta = document.querySelector('meta[name="csrf-token"]');
         const csrfToken = meta && meta.getAttribute('content') ? meta.getAttribute('content') : getCookie('csrftoken');
 
-        fetch(`/api/workflows/${workflowId}/execute/`, {
+        fetch(`/workflow/api/workflows/${workflowId}/execute/`, {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
@@ -170,7 +170,7 @@ function executeWorkflow(workflowId) {
             if (data.execution_id) {
                 alert('Workflow execution started successfully!');
                 // Optional: Redirect or refresh
-                window.location.href = `/executions/?workflow=${workflowId}`;
+                window.location.href = `/workflow/executions/?workflow=${workflowId}`;
             } else {
                 alert(data.error || 'Error starting workflow execution');
             }

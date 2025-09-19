@@ -407,6 +407,10 @@ class WorkflowEngine:
                 node_input
             )
             
+            # Add input/output mapping to config
+            node_config['input_mapping'] = node_def.get('input_mapping', {})
+            node_config['output_mapping'] = node_def.get('output_mapping', {})
+            
             # Execute the node
             result = handler.execute(node_config, node_input, context)
             

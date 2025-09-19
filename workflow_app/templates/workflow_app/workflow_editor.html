@@ -254,6 +254,28 @@
                                 <label for="retry-delay-setting">Retry Delay (seconds)</label>
                                 <input type="number" id="retry-delay-setting" name="retry_delay" value="60" min="1" max="3600">
                             </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="schedule-enabled" name="is_scheduled"> Enable Scheduling
+                                </label>
+                            </div>
+                            <div class="form-group" id="schedule-config" style="display: none;">
+                                <label for="cron-expression">Cron Expression</label>
+                                <input type="text" id="cron-expression" name="cron_expression" placeholder="0 9 * * *" class="form-control">
+                                <small class="form-help">Examples: "0 9 * * *" (daily at 9am), "*/15 * * * *" (every 15 minutes)</small>
+                            </div>
+                            <div class="form-group" id="timezone-config" style="display: none;">
+                                <label for="timezone">Timezone</label>
+                                <select id="timezone" name="timezone" class="form-control">
+                                    <option value="UTC">UTC</option>
+                                    <option value="America/New_York">Eastern Time</option>
+                                    <option value="America/Chicago">Central Time</option>
+                                    <option value="America/Denver">Mountain Time</option>
+                                    <option value="America/Los_Angeles">Pacific Time</option>
+                                    <option value="Europe/London">London</option>
+                                    <option value="Asia/Tokyo">Tokyo</option>
+                                </select>
+                            </div>
                         </form>
                     </div>
                 </div>
@@ -276,12 +298,12 @@
 
     <!-- JavaScript -->
     <script src="{% static 'workflow_app/js/workflow-editor.js' %}"></script>
+    <script src="{% static 'workflow_app/js/variable-manager.js' %}"></script>
     <script>
         // Initialize editor with workflow data
         const workflowData = {{ workflow_json|safe }};
         const workflowId = "{{ workflow.id|default:'' }}";
-        const csrfMeta = document.querySelector('meta[name="csrf-token"]');
-        const csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
+        const csrfToken = "{{ csrf_token }}";
         
         // Initialize the workflow editor
         document.addEventListener('DOMContentLoaded', function() {
@@ -289,9 +311,71 @@
                 workflowId: workflowId,
                 workflowData: workflowData,
                 csrfToken: csrfToken,
-                // correct API base path used by router
-                apiBaseUrl: '/api/workflows/' 
+                apiBaseUrl: '/workflow/api/workflows/'
             });
+            
+            // Initialize variable manager
+            if (workflowId) {
+                window.variableManager = new VariableManager(workflowId);
+            }
+            
+            // Setup scheduling toggle
+            const scheduleCheckbox = document.getElementById('schedule-enabled');
+            const scheduleConfig = document.getElementById('schedule-config');
+            const timezoneConfig = document.getElementById('timezone-config');
+            
+            if (scheduleCheckbox) {
+                scheduleCheckbox.addEventListener('change', (e) => {
+                    const isEnabled = e.target.checked;
+                    scheduleConfig.style.display = isEnabled ? 'block' : 'none';
+                    timezoneConfig.style.display = isEnabled ? 'block' : 'none';
+                });
+            }
+            
+            // Add CSS animations
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes slideIn {
+                    from { transform: translateX(100%); opacity: 0; }
+                    to { transform: translateX(0); opacity: 1; }
+                }
+                @keyframes pulse {
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: 0.5; }
+                }
+                .notification {
+                    animation: slideIn 0.3s ease;
+                }
+                .variable-item {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 8px 0;
+                    border-bottom: 1px solid #e5e7eb;
+                }
+                .variable-info {
+                    flex: 1;
+                }
+                .variable-name {
+                    font-weight: 600;
+                    color: #1f2937;
+                }
+                .variable-value {
+                    font-size: 0.875rem;
+                    color: #6b7280;
+                    margin-top: 2px;
+                }
+                .variable-scope {
+                    font-size: 0.75rem;
+                    color: #9ca3af;
+                    text-transform: uppercase;
+                }
+                .variable-actions {
+                    display: flex;
+                    gap: 4px;
+                }
+            `;
+            document.head.appendChild(style);
         });
     </script>
 </body>

@@ -13,26 +13,44 @@ class DataTransformHandler(BaseNodeHandler):
         transform_type = config.get('transform_type', 'map')
         field_mappings = config.get('field_mappings', [])
         
-        data = input_data.get('data', {})
+        # Handle input data mapping
+        mapped_input = self._apply_input_mapping(input_data, config.get('input_mapping', {}))
+        data = mapped_input.get('data', {})
         
         if transform_type == 'map':
-            return self._map_fields(data, field_mappings)
+            result = self._map_fields(data, field_mappings)
         elif transform_type == 'filter':
-            return self._filter_data(data, config)
+            result = self._filter_data(data, config)
         elif transform_type == 'aggregate':
-            return self._aggregate_data(data, config)
+            result = self._aggregate_data(data, config)
         else:
             raise ValueError(f"Unsupported transform type: {transform_type}")
+        
+        # Apply output mapping
+        return self._apply_output_mapping(result, config.get('output_mapping', {}))
     
     def _map_fields(self, data: Any, mappings: List[Dict]) -> Dict[str, Any]:
         """Map fields from input to output"""
+        # Parse mappings if string
+        if isinstance(mappings, str):
+            try:
+                mappings = json.loads(mappings) if mappings else []
+            except json.JSONDecodeError:
+                mappings = []
+        
         if isinstance(data, list):
             result = []
             for item in data:
                 mapped_item = {}
                 for mapping in mappings:
-                    source_field = mapping.get('source')
-                    target_field = mapping.get('target')
+                    if isinstance(mapping, dict):
+                        source_field = mapping.get('source')
+                        target_field = mapping.get('target')
+                    else:
+                        # Handle simple string mappings
+                        source_field = mapping
+                        target_field = mapping
+                    
                     if source_field and target_field:
                         value = self._get_nested_value(item, source_field)
                         self._set_nested_value(mapped_item, target_field, value)
@@ -41,12 +59,46 @@ class DataTransformHandler(BaseNodeHandler):
         else:
             mapped_data = {}
             for mapping in mappings:
-                source_field = mapping.get('source')
-                target_field = mapping.get('target')
+                if isinstance(mapping, dict):
+                    source_field = mapping.get('source')
+                    target_field = mapping.get('target')
+                else:
+                    source_field = mapping
+                    target_field = mapping
+                
                 if source_field and target_field:
                     value = self._get_nested_value(data, source_field)
                     self._set_nested_value(mapped_data, target_field, value)
             return {'data': mapped_data, 'success': True, 'message': 'Data mapped successfully'}
+    
+    def _apply_input_mapping(self, input_data: Dict[str, Any], mapping: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply input data mapping"""
+        if not mapping:
+            return input_data
+        
+        mapped_data = {}
+        for target_field, source_path in mapping.items():
+            value = self._get_nested_value(input_data, source_path)
+            self._set_nested_value(mapped_data, target_field, value)
+        
+        return mapped_data if mapped_data else input_data
+    
+    def _apply_output_mapping(self, output_data: Dict[str, Any], mapping: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply output data mapping"""
+        if not mapping:
+            return output_data
+        
+        mapped_data = {}
+        for target_field, source_path in mapping.items():
+            value = self._get_nested_value(output_data, source_path)
+            self._set_nested_value(mapped_data, target_field, value)
+        
+        if not mapped_data:
+            return output_data
+        
+        result = output_data.copy()
+        result.update(mapped_data)
+        return result
     
     def _filter_data(self, data: Any, config: Dict) -> Dict[str, Any]:
         """Filter data based on conditions"""
